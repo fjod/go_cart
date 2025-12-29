@@ -1,0 +1,31 @@
+﻿syntax = "proto3";
+
+package product;
+
+option go_package = "github.com/fjod/go_cart/product-service/pkg/proto";
+
+// Product message represents a product entity
+message Product {
+  int64 id = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  string image_url = 5;
+  int32 stock = 6;
+  string created_at = 7;  // RFC3339 format
+}
+
+// Request to get all products
+message GetProductsRequest {
+  // Empty for "get all", could add pagination later
+}
+
+// Response containing list of products
+message GetProductsResponse {
+  repeated Product products = 1;
+}
+
+// Product service definition
+service ProductService {
+  rpc GetProducts(GetProductsRequest) returns (GetProductsResponse);
+}
