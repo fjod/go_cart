@@ -25,7 +25,20 @@ jobs:
         run: go work sync
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          # Run tests for all modules in the workspace
+          for dir in $(go list -f '{{.Dir}}' -m); do
+            echo "Testing module in $dir"
+            cd "$dir"
+            go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          done
 
       - name: Check test coverage
-        run: go tool cover -func=coverage.out
+        run: |
+          # Check coverage for all modules
+          for dir in $(go list -f '{{.Dir}}' -m); do
+            if [ -f "$dir/coverage.out" ]; then
+              echo "Coverage for module in $dir:"
+              go tool cover -func="$dir/coverage.out"
+            fi
+          done
