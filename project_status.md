@@ -23,17 +23,17 @@ This document tracks the implementation status of the e-commerce platform micros
 - ✅ Go module initialization (`github.com/fjod/go_cart/product-service`)
 - ✅ SQLite database driver integration (`modernc.org/sqlite`)
 - ✅ Database migration infrastructure using `golang-migrate/migrate`
-- ✅ Products table schema creation (product-service/internal/db/migrations/001_create_products_table.up.sql:1-11)
-- ✅ Sample product data seeding with 5 products (product-service/internal/db/migrations/000002_seed_products.up.sql:1-6)
+- ✅ Products table schema creation (product-service/internal/repository/migrations/001_create_products_table.up.sql:1-11)
+- ✅ Sample product data seeding with 5 products (product-service/internal/repository/migrations/000002_seed_products.up.sql:1-6)
   - Laptop: $1299.99 (50 in stock)
   - Mouse: $29.99 (200 in stock)
   - Keyboard: $89.99 (100 in stock)
   - Monitor: $399.99 (75 in stock)
   - Headphones: $249.99 (150 in stock)
-- ✅ Migration runner implementation (product-service/internal/db/repository.go:20-46)
+- ✅ Migration runner implementation (product-service/internal/repository/repository.go:20-46)
 - ✅ Domain model (Product entity) (product-service/internal/domain/product.go:1-13)
-- ✅ Repository interface pattern for testability (product-service/internal/db/repository.go:20-24)
-- ✅ Repository implementation with context support (product-service/internal/db/repository.go:61-97)
+- ✅ Repository interface pattern for testability (product-service/internal/repository/repository.go:20-24)
+- ✅ Repository implementation with context support (product-service/internal/repository/repository.go:61-97)
   - `GetAllProducts(ctx)` - Query all products
   - `Close()` - Resource cleanup
   - `RunMigrations()` - Database schema management
@@ -49,7 +49,7 @@ This document tracks the implementation status of the e-commerce platform micros
   - Server running on port 8084
   - gRPC reflection enabled for debugging
   - Migration execution on startup
-- ✅ Unit tests for repository layer (product-service/internal/db/repository_test.go:1-70)
+- ✅ Unit tests for repository layer (product-service/internal/repository/repository_test.go:1-70)
   - In-memory SQLite testing
   - Context cancellation tests
   - Test coverage for GetAllProducts
@@ -79,7 +79,7 @@ product-service/
 ├── cmd/
 │   └── main.go                          ✅ gRPC server with reflection
 ├── internal/
-│   ├── db/
+│   ├── repository/
 │   │   ├── repository.go                ✅ Repository implementation + interface
 │   │   ├── repository_test.go           ✅ Unit tests with in-memory DB
 │   │   ├── products.db                  ✅ SQLite database
@@ -104,17 +104,70 @@ product-service/
 
 ---
 
-#### Cart Service ❌ Not Started
+#### Cart Service ⚡ In Progress
 
-**Status:** Not implemented
+**Status:** Repository layer implemented, gRPC layer pending
+
+**Completed:**
+- ✅ Go module initialization (`github.com/fjod/go_cart/cart-service`)
+- ✅ Domain models (Cart, CartItem) (cart-service/internal/domain/cart.go:1-17)
+  - Cart entity with UserID, Items array, timestamps
+  - CartItem with ProductID, Quantity, AddedAt
+  - BSON tags for MongoDB serialization
+- ✅ MongoDB repository interface (cart-service/internal/repository/repository.go:1-18)
+  - CartRepository interface with 6 methods
+  - GetCart, UpsertCart, AddItem, UpdateItemQuantity, RemoveItem, DeleteCart
+- ✅ MongoDB repository implementation (cart-service/internal/repository/mongo_repository.go:1-224)
+  - Full CRUD operations for cart management
+  - AddItem with upsert logic (creates cart if doesn't exist)
+  - Automatic quantity update when same product added
+  - TTL index (90 days) for automatic cart cleanup
+  - Unique index on user_id
+  - Context-aware operations with proper error handling
+- ✅ MongoDB connection utility (cart-service/internal/repository/connection.go:1-31)
+  - ConnectMongoDB helper with connection pooling
+  - Configurable pool sizes (min: 10, max: 100)
+  - Connection timeout and server selection timeout
+  - Ping verification
+- ✅ Repository tests with testcontainers (cart-service/internal/repository/mongodb_repository_test.go:1-179)
+  - Integration tests using real MongoDB container (mongo:7)
+  - Tests for all CRUD operations
+  - Context cancellation tests
+  - Test coverage for edge cases (cart not found, item updates, etc.)
+- ✅ Dependencies installed
+  - go.mongodb.org/mongo-driver v1.17.6
+  - github.com/testcontainers/testcontainers-go v0.40.0
+  - github.com/testcontainers/testcontainers-go/modules/mongodb v0.40.0
+  - github.com/stretchr/testify v1.11.1
 
 **Pending:**
-- ⏳ Project structure setup
-- ⏳ MongoDB integration
-- ⏳ Redis caching layer
 - ⏳ gRPC service implementation
+  - Protobuf definitions
+  - gRPC handler implementation
+  - Server setup
+- ⏳ Redis caching layer integration
 - ⏳ Kafka consumer for checkout events
-- ⏳ Protobuf definitions
+- ⏳ Production hardening
+  - Configuration management (environment variables)
+  - Graceful shutdown handling
+  - Structured logging
+- ⏳ gRPC handler unit tests
+
+**File Structure:**
+```
+cart-service/
+├── cmd/
+│   └── main.go                          ⏳ Placeholder (needs gRPC server)
+├── internal/
+│   ├── domain/
+│   │   └── cart.go                      ✅ Cart and CartItem entities
+│   └── repository/
+│       ├── repository.go                ✅ Repository interface
+│       ├── mongo_repository.go          ✅ MongoDB implementation
+│       ├── mongodb_repository_test.go   ✅ Integration tests
+│       └── connection.go                ✅ MongoDB connection utility
+└── go.mod                               ✅ Dependencies configured
+```
 
 ---
 
@@ -159,14 +212,23 @@ product-service/
 
 ## Infrastructure Status
 
-### Docker Compose Environment ❌ Not Set Up
+### Docker Compose Environment ⚡ Partially Set Up
+
+**Completed:**
+- ✅ MongoDB container configured (deployments/docker-compose.dev.yml:4-11)
+  - mongo:7 image
+  - Port mapping: 27017:27017
+  - Database name: ecommerce
+  - Persistent volume: mongo_data
+- ✅ Redis container configured (deployments/docker-compose.dev.yml:13-17)
+  - redis:7-alpine image
+  - Port mapping: 6379:6379
+  - Memory limit: 256mb with LRU eviction policy
 
 **Pending:**
-- ⏳ MongoDB container
-- ⏳ Redis container
 - ⏳ PostgreSQL container
 - ⏳ Kafka + Zookeeper containers
-- ⏳ Service orchestration
+- ⏳ Service containers (product-service, cart-service, etc.)
 
 ---
 
@@ -176,9 +238,14 @@ product-service/
 - **SQLite Driver:** ✅ Using `modernc.org/sqlite` (pure Go implementation)
   - **Changed from:** `github.com/mattn/go-sqlite3` (CGO-based)
   - **Reason:** Pure Go, no CGO dependencies, easier cross-platform builds
-- **MongoDB:** ❌ Not configured
+- **MongoDB:** ✅ Configured for Cart Service
+  - Docker container (mongo:7) in docker-compose.dev.yml
+  - MongoDB driver: go.mongodb.org/mongo-driver v1.17.6
+  - Repository implementation with indexes and TTL
+- **Redis:** ✅ Configured in Docker Compose
+  - Docker container (redis:7-alpine) in docker-compose.dev.yml
+  - Not yet integrated in code
 - **PostgreSQL:** ❌ Not configured
-- **Redis:** ❌ Not configured
 
 ### Communication
 - **gRPC:** ✅ Product Service implemented (port 8084)
@@ -186,11 +253,21 @@ product-service/
 - **HTTP/REST:** ❌ Not implemented
 
 ### Libraries Installed
+
+**Product Service:**
 - ✅ `modernc.org/sqlite` v1.41.0 - SQLite driver
 - ✅ `github.com/golang-migrate/migrate/v4` v4.19.1 - Database migrations
 - ✅ `github.com/google/uuid` v1.6.0 - UUID generation
 - ✅ `google.golang.org/grpc` v1.78.0 - gRPC framework
 - ✅ `google.golang.org/protobuf` v1.36.11 - Protocol Buffers
+
+**Cart Service:**
+- ✅ `go.mongodb.org/mongo-driver` v1.17.6 - MongoDB driver
+- ✅ `github.com/testcontainers/testcontainers-go` v0.40.0 - Integration testing with containers
+- ✅ `github.com/testcontainers/testcontainers-go/modules/mongodb` v0.40.0 - MongoDB testcontainer module
+- ✅ `github.com/stretchr/testify` v1.11.1 - Testing assertions
+- ✅ `google.golang.org/grpc` v1.78.0 - gRPC framework (inherited)
+- ✅ `google.golang.org/protobuf` v1.36.11 - Protocol Buffers (inherited)
 
 ---
 
@@ -198,7 +275,14 @@ product-service/
 
 ### Immediate Priorities
 
-1. **Production Hardening for Product Service** ⚠️
+1. **Complete Cart Service gRPC Layer** 🎯
+   - Define protobuf messages and service
+   - Implement gRPC handler for cart operations
+   - Set up gRPC server
+   - Add unit tests for gRPC handler
+   - Integrate Redis caching layer
+
+2. **Production Hardening for Product Service** ⚠️
    - Fix critical bug: Remove pointer to interface (handler.go:15, 18)
    - Add environment variable configuration
    - Implement graceful shutdown
@@ -207,7 +291,7 @@ product-service/
    - Fix price precision (use cents or decimal)
    - Update timestamp to use google.protobuf.Timestamp
 
-2. **Complete Product Service CRUD Operations**
+3. **Complete Product Service CRUD Operations**
    - Implement `GetProduct(id)` endpoint
    - Implement `CreateProduct()` endpoint
    - Implement `UpdateProduct()` endpoint
@@ -215,21 +299,15 @@ product-service/
    - Add pagination to `GetProducts()`
    - Add unit tests for gRPC handler
 
-3. **Set Up Docker Compose Infrastructure**
-   - Create `deployments/docker-compose.yml`
-   - Configure MongoDB, Redis, PostgreSQL, Kafka containers
+4. **Expand Docker Compose Infrastructure**
+   - Add PostgreSQL container
+   - Add Kafka + Zookeeper containers
+   - Add service containers
    - Define service networking
-   - Add Product Service container
-
-4. **Implement Cart Service**
-   - Follow same pattern as Product service
-   - Integrate MongoDB and Redis
-   - Implement gRPC service
-   - Add Kafka consumer
 
 5. **Build API Gateway**
    - Set up HTTP server
-   - Create gRPC clients for Product service
+   - Create gRPC clients for Product and Cart services
    - Implement REST endpoints
    - Add basic authentication
 
@@ -238,10 +316,19 @@ product-service/
 ## Testing Status
 
 ### Product Service
-- ✅ Repository unit tests implemented (repository_test.go)
+- ✅ Repository unit tests implemented (product-service/internal/repository/repository_test.go)
   - In-memory SQLite testing
   - Context handling tests
   - Context cancellation tests
+- ⏳ gRPC handler unit tests pending
+- ⏳ Integration tests pending
+
+### Cart Service
+- ✅ Repository integration tests implemented (cart-service/internal/repository/mongodb_repository_test.go)
+  - Testcontainers with real MongoDB (mongo:7)
+  - Full CRUD operation tests
+  - Context cancellation tests
+  - Edge case coverage (not found, duplicate items, etc.)
 - ⏳ gRPC handler unit tests pending
 - ⏳ Integration tests pending
 
@@ -275,11 +362,32 @@ go run cmd/main.go
 ```bash
 # Run repository tests
 cd product-service
-go test ./internal/db/ -v
+go test ./internal/repository/ -v
 
 # Test gRPC endpoint with grpcurl
 grpcurl -plaintext localhost:8084 list
 grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
+```
+
+### Cart Service
+**Build:** ✅ Compiles successfully
+**Run:** ⏳ Placeholder main (gRPC server not implemented)
+**Test:** ✅ Repository integration tests passing (requires Docker)
+
+**How to Run:**
+```bash
+cd cart-service
+go run cmd/main.go
+# Currently just prints "Hello, world!" - gRPC server pending
+```
+
+**How to Test:**
+```bash
+# Run repository integration tests (requires Docker)
+cd cart-service
+go test ./internal/repository/ -v
+
+# Note: Tests will automatically start and stop MongoDB containers
 ```
 
 ---
@@ -318,7 +426,7 @@ grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
 
 ## Progress Summary
 
-**Overall Completion:** ~20%
+**Overall Completion:** ~30%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -326,12 +434,20 @@ grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
 - ✅ Product Service gRPC Layer: 80% (GetProducts complete, CRUD pending)
 - ✅ Product Service Tests: 50% (Repository done, handler pending)
 - ⚠️ Product Service Production Readiness: 40% (needs hardening)
-- ❌ Cart Service: 0%
+- 🔄 Cart Service Database Layer: 100%
+- 🔄 Cart Service Domain Layer: 100%
+- 🔄 Cart Service Repository Layer: 100%
+- 🔄 Cart Service Tests: 60% (Repository integration tests done, gRPC handler pending)
+- ❌ Cart Service gRPC Layer: 0%
+- ❌ Cart Service Redis Integration: 0%
 - ❌ Checkout Service: 0%
 - ❌ Orders Service: 0%
 - ❌ Inventory Service: 0%
 - ❌ Payment Service: 0%
 - ❌ API Gateway: 0%
-- ❌ Infrastructure (Docker): 0%
+- 🔄 Infrastructure (Docker): 40% (MongoDB and Redis configured, services and Kafka pending)
 
-**Phase 1 Progress:** Product Service ~75% complete (core features done, hardening needed)
+**Phase 1 Progress:**
+- Product Service ~75% complete (core features done, hardening needed)
+- Cart Service ~60% complete (repository layer done, gRPC layer pending)
+- Docker Infrastructure ~40% complete (MongoDB and Redis done)

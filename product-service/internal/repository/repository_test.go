@@ -2,7 +2,7 @@ package repository_test
 
 import (
 	"context"
-	db "github.com/fjod/go_cart/product-service/internal/db"
+	db "github.com/fjod/go_cart/product-service/internal/repository"
 	"testing"
 	"time"
 )

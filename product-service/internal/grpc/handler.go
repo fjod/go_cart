@@ -1,9 +1,9 @@
-package grpc
+﻿package grpc
 
 import (
 	"context"
 
-	db "github.com/fjod/go_cart/product-service/internal/db"
+	db "github.com/fjod/go_cart/product-service/internal/repository"
 	pb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -1,11 +1,11 @@
-package main
+﻿package main
 
 import (
 	"log"
 	"net"
 
-	repository "github.com/fjod/go_cart/product-service/internal/db"
 	grpcHandler "github.com/fjod/go_cart/product-service/internal/grpc"
+	repository "github.com/fjod/go_cart/product-service/internal/repository"
 	pb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -13,14 +13,14 @@ import (
 
 func main() {
 	log.Println("Product-service started")
-	repo, err := repository.NewRepository("./internal/db/products.db")
+	repo, err := repository.NewRepository("./internal/repository/products.repository")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer repo.Close()
 
 	// Run migrations
-	if err := repo.RunMigrations("./internal/db/migrations"); err != nil {
+	if err := repo.RunMigrations("./internal/repository/migrations"); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
