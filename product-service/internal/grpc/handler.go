@@ -54,3 +54,32 @@ func (s *ProductServiceServer) GetProducts(
 		Products: pbProducts,
 	}, nil
 }
+
+func (s *ProductServiceServer) GetProduct(
+	ctx context.Context,
+	req *pb.GetProductRequest,
+) (*pb.GetProductResponse, error) {
+	p, err := s.repo.GetProduct(ctx, req.Id)
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, status.Error(codes.NotFound, "product not found")
+		}
+		return nil, status.Errorf(
+			codes.Internal,
+			"failed to fetch products: %v",
+			err,
+		)
+	}
+
+	var ret = &pb.Product{
+		Id:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		Price:       p.Price,
+		ImageUrl:    p.ImageURL,
+		Stock:       p.Stock,
+		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+
+	return &pb.GetProductResponse{Product: ret}, nil
+}

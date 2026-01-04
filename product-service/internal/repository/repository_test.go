@@ -2,9 +2,13 @@ package repository_test
 
 import (
 	"context"
-	db "github.com/fjod/go_cart/product-service/internal/repository"
 	"testing"
 	"time"
+
+	db "github.com/fjod/go_cart/product-service/internal/repository"
+	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func setupTestDB(t *testing.T) *db.Repository {
@@ -67,4 +71,35 @@ func TestGetAllProducts_CancelledContext(t *testing.T) {
 	if (err == nil) || (err != nil && err.Error() != "failed to query products: context canceled") {
 		t.Errorf("Expected 'failed to query products: context canceled' error, got %v", err)
 	}
+}
+
+func TestGetProduct_ReturnsProduct(t *testing.T) {
+	repo := setupTestDB(t)
+	defer repo.Close()
+
+	product, err := repo.GetProduct(context.Background(), 1)
+
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	if product == nil {
+		t.Errorf("Received nil product by valid id")
+	}
+	t.Logf("Received product: %+v", *product)
+}
+
+func TestGetProduct_IncorrectId_ReturnsNil(t *testing.T) {
+	repo := setupTestDB(t)
+	defer repo.Close()
+
+	product, err := repo.GetProduct(context.Background(), -1)
+
+	if product != nil {
+		t.Errorf("Expected a nil product for incorrect id %+v", *product)
+	}
+
+	isNil := product == nil
+	t.Logf("Is returned product nil?  %t", isNil)
+	assert.Equal(t, status.Code(err), codes.NotFound)
 }

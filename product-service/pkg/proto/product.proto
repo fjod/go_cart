@@ -1,4 +1,4 @@
-﻿syntax = "proto3";
+syntax = "proto3";
 
 package product;
 
@@ -20,12 +20,21 @@ message GetProductsRequest {
   // Empty for "get all", could add pagination later
 }
 
+message GetProductRequest {
+  int64 id = 1;
+}
+
 // Response containing list of products
 message GetProductsResponse {
   repeated Product products = 1;
 }
 
+message GetProductResponse {
+  Product product = 1;
+}
+
 // Product service definition
 service ProductService {
   rpc GetProducts(GetProductsRequest) returns (GetProductsResponse);
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
 }
