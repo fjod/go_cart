@@ -105,7 +105,7 @@ product-service/
 
 #### Cart Service ✅ Mostly Complete
 
-**Status:** Repository and gRPC layers implemented, Redis integration and additional endpoints pending
+**Status:** Repository and gRPC layers implemented and tested, Redis integration and additional endpoints pending
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/cart-service`)
@@ -138,18 +138,34 @@ product-service/
   - github.com/testcontainers/testcontainers-go v0.40.0
   - github.com/testcontainers/testcontainers-go/modules/mongodb v0.40.0
   - github.com/stretchr/testify v1.11.1
+- ✅ gRPC service implementation (cart-service/pkg/proto/cart.proto:1-37, cart-service/internal/grpc/handler.go:1-56)
+  - Protobuf definitions for Cart, CartItem, AddCartItemRequest/Response
+  - AddCartItemService with AddItem RPC endpoint
+  - gRPC handler with product validation via Product Service
+  - Server running on port 50052 with reflection support
+  - **Tested:** Successfully adds items to MongoDB cartdb collection
+- ✅ Product Service integration
+  - gRPC client connection to Product Service (localhost:50051)
+  - Product validation before adding to cart
+- ✅ Environment variable configuration
+  - CART_SERVICE_PORT (default: 50052)
+  - PRODUCT_SERVICE_ADDR (default: localhost:50051)
+  - MONGO_URI (default: mongodb://localhost:27017)
+  - MONGO_DB_NAME (default: cartdb)
+- ✅ Graceful shutdown handling
 
 **Pending:**
--✅ gRPC service implementation
- ✅ Protobuf definitions
- ✅ gRPC handler implementation
- ✅ Server setup
+- ⏳ Additional gRPC endpoints
+  - GetCart() - Retrieve user's cart
+  - UpdateQuantity() - Update item quantity
+  - RemoveItem() - Remove item from cart
+  - ClearCart() - Clear entire cart
 - ⏳ Redis caching layer integration
 - ⏳ Kafka consumer for checkout events
 - ⏳ Production hardening
-  - Configuration management (environment variables)
-  - Graceful shutdown handling
   - Structured logging
+  - Request validation improvements
+  - Error handling enhancements
 - ⏳ gRPC handler unit tests
 
 **File Structure:**
@@ -283,28 +299,33 @@ cart-service/
 ### Immediate Priorities
 
 1. **Complete Cart Service gRPC Layer** 🎯
-   - Define protobuf messages and service
-   - Implement gRPC handler for cart operations
-   - Set up gRPC server
-   - Add unit tests for gRPC handler
-   - Integrate Redis caching layer
+   - ✅ Define protobuf messages and service (DONE)
+   - ✅ Implement gRPC handler for AddItem (DONE)
+   - ✅ Set up gRPC server (DONE)
+   - ⏳ Implement remaining endpoints:
+     - GetCart() - Retrieve user's cart
+     - UpdateQuantity() - Update item quantity
+     - RemoveItem() - Remove item from cart
+     - ClearCart() - Clear entire cart
+   - ⏳ Add unit tests for gRPC handler
+   - ⏳ Integrate Redis caching layer
 
 2. **Production Hardening for Product Service** ⚠️
    - Fix critical bug: Remove pointer to interface (handler.go:15, 18)
-   - Add environment variable configuration
-   - Implement graceful shutdown
-   - Configure database connection pool
-   - Add structured logging (slog or zap)
-   - Fix price precision (use cents or decimal)
-   - Update timestamp to use google.protobuf.Timestamp
+   - ✅ Add environment variable configuration (DONE)
+   - ⏳ Implement graceful shutdown
+   - ⏳ Configure database connection pool
+   - ⏳ Add structured logging (slog or zap)
+   - ⏳ Fix price precision (use cents or decimal)
+   - ⏳ Update timestamp to use google.protobuf.Timestamp
 
 3. **Complete Product Service CRUD Operations**
-   - Implement `GetProduct(id)` endpoint
-   - Implement `CreateProduct()` endpoint
-   - Implement `UpdateProduct()` endpoint
-   - Implement `DeleteProduct()` endpoint
-   - Add pagination to `GetProducts()`
-   - Add unit tests for gRPC handler
+   - ✅ Implement `GetProduct(id)` endpoint (DONE)
+   - ⏳ Implement `CreateProduct()` endpoint
+   - ⏳ Implement `UpdateProduct()` endpoint
+   - ⏳ Implement `DeleteProduct()` endpoint
+   - ⏳ Add pagination to `GetProducts()`
+   - ⏳ Add unit tests for gRPC handler
 
 4. **Expand Docker Compose Infrastructure**
    - Add PostgreSQL container
@@ -378,14 +399,20 @@ grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
 
 ### Cart Service
 **Build:** ✅ Compiles successfully
-**Run:** ⏳ Placeholder main (gRPC server not implemented)
+**Run:** ✅ gRPC server running on port 50052
 **Test:** ✅ Repository integration tests passing (requires Docker)
 
 **How to Run:**
 ```bash
 cd cart-service
 go run cmd/main.go
-# Currently just prints "Hello, world!" - gRPC server pending
+```
+
+**Expected Output:**
+```
+2026/01/08 [timestamp] Connected to MongoDB at mongodb://localhost:27017
+2026/01/08 [timestamp] Connected to product service at localhost:50051
+2026/01/08 [timestamp] Cart service listening on port 50052
 ```
 
 **How to Test:**
@@ -394,7 +421,12 @@ go run cmd/main.go
 cd cart-service
 go test ./internal/repository/ -v
 
-# Note: Tests will automatically start and stop MongoDB containers
+# Test gRPC endpoint with grpcurl
+grpcurl -plaintext localhost:50052 list
+grpcurl -plaintext -d "{\"user_id\": 1, \"product_id\": 1, \"quantity\": 2}" localhost:50052 cart.AddCartItemService/AddItem
+
+# Verify in MongoDB
+mongosh cartdb --eval "db.carts.find().pretty()"
 ```
 
 ---
@@ -409,7 +441,7 @@ go test ./internal/repository/ -v
    - Fix: Remove pointer from interface type
 
 2. **High Priority:**
-   - Hardcoded database path and port (should use env vars)
+   - ✅ Hardcoded database path and port (FIXED - now uses env vars)
    - No graceful shutdown (SIGTERM not handled)
    - Price stored as float64 (precision issues for money)
    - Timestamp as string in protobuf (should use google.protobuf.Timestamp)
@@ -428,24 +460,29 @@ go test ./internal/repository/ -v
 - Project uses Go workspaces (need to run `go work init` and `go work use ./product-service`)
 - Pure Go SQLite driver chosen for better cross-platform compatibility
 - Migration files use UTF-8 with BOM encoding
+- Both services successfully running in parallel:
+  - Product Service: localhost:50051
+  - Cart Service: localhost:50052
+- Cart Service successfully validated against Product Service and persisting to MongoDB
 
 ---
 
 ## Progress Summary
 
-**Overall Completion:** ~30%
+**Overall Completion:** ~35%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
 - ✅ Product Service Repository Layer: 100%
 - ✅ Product Service gRPC Layer: 80% (GetProducts complete, CRUD pending)
 - ✅ Product Service Tests: 50% (Repository done, handler pending)
-- ⚠️ Product Service Production Readiness: 40% (needs hardening)
-- 🔄 Cart Service Database Layer: 100%
-- 🔄 Cart Service Domain Layer: 100%
-- 🔄 Cart Service Repository Layer: 100%
-- 🔄 Cart Service Tests: 60% (Repository integration tests done, gRPC handler pending)
-- ❌ Cart Service gRPC Layer: 0%
+- ⚠️ Product Service Production Readiness: 60% (env vars added, graceful shutdown needed)
+- ✅ Cart Service Database Layer: 100%
+- ✅ Cart Service Domain Layer: 100%
+- ✅ Cart Service Repository Layer: 100%
+- ✅ Cart Service gRPC Layer: 40% (AddItem complete and tested, 4 endpoints pending)
+- ✅ Cart Service Tests: 60% (Repository integration tests done, gRPC handler pending)
+- ✅ Cart Service Production Readiness: 60% (env vars, graceful shutdown done)
 - ❌ Cart Service Redis Integration: 0%
 - ❌ Checkout Service: 0%
 - ❌ Orders Service: 0%
@@ -456,5 +493,12 @@ go test ./internal/repository/ -v
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
-- Cart Service ~60% complete (repository layer done, gRPC layer pending)
+- Cart Service ~70% complete (AddItem endpoint working, additional endpoints pending)
 - Docker Infrastructure ~40% complete (MongoDB and Redis done)
+
+**Recent Progress (January 8, 2026):**
+- ✅ Added environment variable support to Product Service
+- ✅ Implemented Cart Service AddItem gRPC endpoint
+- ✅ Added gRPC reflection support to Cart Service
+- ✅ Successfully tested AddItem endpoint - items persisting to MongoDB cartdb collection
+- ✅ Product and Cart services running simultaneously on ports 50051 and 50052

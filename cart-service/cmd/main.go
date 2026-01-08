@@ -15,6 +15,7 @@ import (
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -59,6 +60,9 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterAddCartItemServiceServer(grpcServer, cartServer)
+
+	// Enable reflection for grpcurl/grpcui
+	reflection.Register(grpcServer)
 
 	// Graceful shutdown
 	go func() {
