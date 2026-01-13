@@ -86,8 +86,9 @@ func main() {
 		r.Route("/cart", func(r chi.Router) {
 			r.Get("/", cartHandler.GetCart)
 			r.Post("/items", cartHandler.AddItem)
-			//r.Put("/items/{product_id}", cartHandler.UpdateQuantity)
-			//r.Delete("/items/{product_id}", cartHandler.RemoveItem)
+			r.Put("/items/{product_id}", cartHandler.UpdateQuantity)
+			r.Delete("/items/{product_id}", cartHandler.RemoveItem)
+			r.Delete("/", cartHandler.ClearCart)
 		})
 	})
 

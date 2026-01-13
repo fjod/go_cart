@@ -30,13 +30,34 @@ message GetCartRequest {
   int64 user_id = 1;
 }
 
+// Request to update item quantity
+message UpdateQuantityRequest {
+  int64 user_id = 1;
+  int64 product_id = 2;
+  int32 quantity = 3;
+}
+
+// Request to remove item from cart
+message RemoveItemRequest {
+  int64 user_id = 1;
+  int64 product_id = 2;
+}
+
+// Request to clear entire cart
+message ClearCartRequest {
+  int64 user_id = 1;
+}
+
 // Response
 message CartResponse {
   Cart cart = 1;
 }
 
-// AddCartItem service definition
+// Cart service definition
 service CartService {
   rpc AddItem(AddCartItemRequest) returns (CartResponse);
   rpc GetCart(GetCartRequest) returns (CartResponse);
+  rpc UpdateQuantity(UpdateQuantityRequest) returns (CartResponse);
+  rpc RemoveItem(RemoveItemRequest) returns (CartResponse);
+  rpc ClearCart(ClearCartRequest) returns (CartResponse);
 }

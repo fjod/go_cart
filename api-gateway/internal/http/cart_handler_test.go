@@ -10,6 +10,7 @@ import (
 	"time"
 
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,6 +31,33 @@ func (c ClientMock) GetCart(ctx context.Context, in *pb.GetCartRequest, opts ...
 }
 
 func (c ClientMock) AddItem(ctx context.Context, in *pb.AddCartItemRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &pb.CartResponse{
+		Cart: c.cart,
+	}, nil
+}
+
+func (c ClientMock) UpdateQuantity(ctx context.Context, in *pb.UpdateQuantityRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &pb.CartResponse{
+		Cart: c.cart,
+	}, nil
+}
+
+func (c ClientMock) RemoveItem(ctx context.Context, in *pb.RemoveItemRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &pb.CartResponse{
+		Cart: c.cart,
+	}, nil
+}
+
+func (c ClientMock) ClearCart(ctx context.Context, in *pb.ClearCartRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -303,5 +331,306 @@ func TestAddItem_GRPCErrors(t *testing.T) {
 				t.Errorf("Expected error code '%s', got '%s'", tt.expectedCode, response.Code)
 			}
 		})
+	}
+}
+
+func TestUpdateQuantity_Success(t *testing.T) {
+	clientMock := ClientMock{
+		cart: &pb.Cart{
+			UserId: 1,
+			Cart: []*pb.CartItem{
+				{ProductId: 1, Quantity: 10}, // Updated quantity
+			},
+		},
+		err: nil,
+	}
+
+	handler := NewCartHandler(clientMock, 5*time.Second)
+	req := &UpdateQuantityRequestDTO{Quantity: 10}
+	reqBytes, _ := json.Marshal(req)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("PUT", "/items/1", bytes.NewReader(reqBytes))
+
+	// Add user_id to context and URL param
+	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx = context.WithValue(ctx, "request_id", "test-request-123")
+	request = request.WithContext(ctx)
+
+	// Mock chi.URLParam by using chi's context
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("product_id", "1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+	handler.UpdateQuantity(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	var response pb.Cart
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.Cart[0].Quantity != 10 {
+		t.Errorf("Expected quantity 10, got %d", response.Cart[0].Quantity)
+	}
+}
+
+func TestUpdateQuantity_InvalidProductID(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	tests := []struct {
+		name      string
+		productID string
+	}{
+		{"non-numeric product_id", "abc"},
+		{"zero product_id", "0"},
+		{"negative product_id", "-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &UpdateQuantityRequestDTO{Quantity: 5}
+			reqBytes, _ := json.Marshal(req)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest("PUT", "/items/"+tt.productID, bytes.NewReader(reqBytes))
+
+			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			request = request.WithContext(ctx)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("product_id", tt.productID)
+			request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+			handler.UpdateQuantity(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, recorder.Code)
+			}
+		})
+	}
+}
+
+func TestUpdateQuantity_InvalidQuantity(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	tests := []struct {
+		name     string
+		quantity int32
+	}{
+		{"zero quantity", 0},
+		{"negative quantity", -1},
+		{"quantity too high", 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &UpdateQuantityRequestDTO{Quantity: tt.quantity}
+			reqBytes, _ := json.Marshal(req)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest("PUT", "/items/1", bytes.NewReader(reqBytes))
+
+			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			request = request.WithContext(ctx)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("product_id", "1")
+			request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+			handler.UpdateQuantity(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, recorder.Code)
+			}
+
+			var response ErrorResponse
+			json.NewDecoder(recorder.Body).Decode(&response)
+			if response.Code != "invalid_quantity" {
+				t.Errorf("Expected error code 'invalid_quantity', got '%s'", response.Code)
+			}
+		})
+	}
+}
+
+func TestRemoveItem_Success(t *testing.T) {
+	clientMock := ClientMock{
+		cart: &pb.Cart{
+			UserId: 1,
+			Cart:   []*pb.CartItem{}, // Item removed
+		},
+		err: nil,
+	}
+
+	handler := NewCartHandler(clientMock, 5*time.Second)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("DELETE", "/items/1", nil)
+
+	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx = context.WithValue(ctx, "request_id", "test-request-123")
+	request = request.WithContext(ctx)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("product_id", "1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+	handler.RemoveItem(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	var response pb.Cart
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(response.Cart) != 0 {
+		t.Errorf("Expected empty cart, got %d items", len(response.Cart))
+	}
+}
+
+func TestRemoveItem_InvalidProductID(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	tests := []struct {
+		name      string
+		productID string
+	}{
+		{"non-numeric product_id", "abc"},
+		{"zero product_id", "0"},
+		{"negative product_id", "-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest("DELETE", "/items/"+tt.productID, nil)
+
+			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			request = request.WithContext(ctx)
+
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("product_id", tt.productID)
+			request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+			handler.RemoveItem(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, recorder.Code)
+			}
+
+			var response ErrorResponse
+			json.NewDecoder(recorder.Body).Decode(&response)
+			if response.Code != "invalid_product_id" {
+				t.Errorf("Expected error code 'invalid_product_id', got '%s'", response.Code)
+			}
+		})
+	}
+}
+
+func TestRemoveItem_Unauthorized(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("DELETE", "/items/1", nil)
+	// No user_id in context
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("product_id", "1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, rctx))
+
+	handler.RemoveItem(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+}
+
+func TestClearCart_Success(t *testing.T) {
+	clientMock := ClientMock{
+		cart: &pb.Cart{
+			UserId: 1,
+			Cart:   []*pb.CartItem{}, // Empty cart
+		},
+		err: nil,
+	}
+
+	handler := NewCartHandler(clientMock, 5*time.Second)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("DELETE", "/", nil)
+
+	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx = context.WithValue(ctx, "request_id", "test-request-123")
+	request = request.WithContext(ctx)
+
+	handler.ClearCart(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	var response pb.Cart
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(response.Cart) != 0 {
+		t.Errorf("Expected empty cart, got %d items", len(response.Cart))
+	}
+
+	if response.UserId != 1 {
+		t.Errorf("Expected user_id 1, got %d", response.UserId)
+	}
+}
+
+func TestClearCart_Unauthorized(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("DELETE", "/", nil)
+	// No user_id in context
+
+	handler.ClearCart(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+
+	var response ErrorResponse
+	json.NewDecoder(recorder.Body).Decode(&response)
+	if response.Code != "unauthorized" {
+		t.Errorf("Expected error code 'unauthorized', got '%s'", response.Code)
+	}
+}
+
+func TestClearCart_GRPCError(t *testing.T) {
+	clientMock := ClientMock{
+		cart: nil,
+		err:  status.Error(codes.Internal, "database error"),
+	}
+
+	handler := NewCartHandler(clientMock, 5*time.Second)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("DELETE", "/", nil)
+
+	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	request = request.WithContext(ctx)
+
+	handler.ClearCart(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, recorder.Code)
+	}
+
+	var response ErrorResponse
+	json.NewDecoder(recorder.Body).Decode(&response)
+	if response.Code != "internal_error" {
+		t.Errorf("Expected error code 'internal_error', got '%s'", response.Code)
 	}
 }

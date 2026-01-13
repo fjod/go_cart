@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -40,19 +41,41 @@ func (m mockRepository) AddItem(ctx context.Context, userID string, item domain.
 	return nil
 }
 
-func (m mockRepository) UpdateItemQuantity(ctx context.Context, userID string, productID int64, quantity int) error {
-	//TODO implement me
-	panic("implement me")
+func (m *mockRepository) UpdateItemQuantity(ctx context.Context, userID string, productID int64, quantity int) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Find and update the item
+	for i := range m.cart.Items {
+		if m.cart.Items[i].ProductID == productID {
+			m.cart.Items[i].Quantity = quantity
+			return nil
+		}
+	}
+	return fmt.Errorf("item not found")
 }
 
-func (m mockRepository) RemoveItem(ctx context.Context, userID string, productID int64) error {
-	//TODO implement me
-	panic("implement me")
+func (m *mockRepository) RemoveItem(ctx context.Context, userID string, productID int64) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Find and remove the item
+	for i, item := range m.cart.Items {
+		if item.ProductID == productID {
+			m.cart.Items = append(m.cart.Items[:i], m.cart.Items[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("item not found")
 }
 
-func (m mockRepository) DeleteCart(ctx context.Context, userID string) error {
-	//TODO implement me
-	panic("implement me")
+func (m *mockRepository) DeleteCart(ctx context.Context, userID string) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Clear all items
+	m.cart.Items = []domain.CartItem{}
+	return nil
 }
 
 // mockProductServiceClient implements productpb.ProductServiceClient
@@ -205,4 +228,200 @@ func TestAddItem_NoStock(t *testing.T) {
 
 	assert.Nil(t, ret)
 	assert.True(t, status.Code(err) == codes.FailedPrecondition)
+}
+
+func TestUpdateQuantity_Success(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items: []domain.CartItem{
+				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
+				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
+			},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	ret, err := server.UpdateQuantity(context.Background(), &pb.UpdateQuantityRequest{
+		UserId:    123,
+		ProductId: 1,
+		Quantity:  15,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, ret)
+	assert.Equal(t, 2, len(ret.Cart.Cart))
+	// Verify the quantity was updated
+	assert.Equal(t, int32(15), ret.Cart.Cart[0].Quantity)
+	assert.Equal(t, int64(1), ret.Cart.Cart[0].ProductId)
+}
+
+func TestUpdateQuantity_InvalidInput(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	tests := []struct {
+		name     string
+		req      *pb.UpdateQuantityRequest
+		wantCode codes.Code
+	}{
+		{
+			name:     "zero user_id",
+			req:      &pb.UpdateQuantityRequest{UserId: 0, ProductId: 1, Quantity: 5},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "zero product_id",
+			req:      &pb.UpdateQuantityRequest{UserId: 123, ProductId: 0, Quantity: 5},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "zero quantity",
+			req:      &pb.UpdateQuantityRequest{UserId: 123, ProductId: 1, Quantity: 0},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "quantity too high",
+			req:      &pb.UpdateQuantityRequest{UserId: 123, ProductId: 1, Quantity: 100},
+			wantCode: codes.InvalidArgument,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ret, err := server.UpdateQuantity(context.Background(), tt.req)
+			assert.Nil(t, ret)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
+}
+
+func TestRemoveItem_Success(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items: []domain.CartItem{
+				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
+				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
+			},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	ret, err := server.RemoveItem(context.Background(), &pb.RemoveItemRequest{
+		UserId:    123,
+		ProductId: 1,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, ret)
+	// Should only have 1 item left
+	assert.Equal(t, 1, len(ret.Cart.Cart))
+	// The remaining item should be product 2
+	assert.Equal(t, int64(2), ret.Cart.Cart[0].ProductId)
+	assert.Equal(t, int32(10), ret.Cart.Cart[0].Quantity)
+}
+
+func TestRemoveItem_InvalidInput(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	tests := []struct {
+		name     string
+		req      *pb.RemoveItemRequest
+		wantCode codes.Code
+	}{
+		{
+			name:     "zero user_id",
+			req:      &pb.RemoveItemRequest{UserId: 0, ProductId: 1},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name:     "zero product_id",
+			req:      &pb.RemoveItemRequest{UserId: 123, ProductId: 0},
+			wantCode: codes.InvalidArgument,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ret, err := server.RemoveItem(context.Background(), tt.req)
+			assert.Nil(t, ret)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
+}
+
+func TestClearCart_Success(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items: []domain.CartItem{
+				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
+				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
+			},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
+		UserId: 123,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, ret)
+	// Cart should be empty
+	assert.Equal(t, 0, len(ret.Cart.Cart))
+	assert.Equal(t, int64(123), ret.Cart.UserId)
+}
+
+func TestClearCart_InvalidInput(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items:     []domain.CartItem{},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+
+	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
+		UserId: 0,
+	})
+
+	assert.Nil(t, ret)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
