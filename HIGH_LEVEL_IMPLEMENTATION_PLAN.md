@@ -127,6 +127,138 @@ service CartService {
 - TTL: 15 minutes with random jitter (0-5 minutes) to prevent thundering herd
 - Singleflight pattern to prevent cache stampede
 
+**Redis Integration Implementation Plan:**
+
+This step-by-step plan ensures each layer is independently tested before integration:
+
+**Step 1: Create Redis Cache Implementation (1-2 hours)**
+- Create `cart-service/internal/cache/cache.go` - Interface definition
+    - `Get(ctx, userID)` - Retrieve cart from cache
+    - `Set(ctx, userID, cart)` - Store cart with TTL + jitter
+    - `Delete(ctx, userID)` - Invalidate cache entry
+    - `ErrCacheMiss` - Sentinel error for cache misses
+- Create `cart-service/internal/cache/redis.go` - Redis implementation
+    - Use `github.com/redis/go-redis/v9` client
+    - Key format: `cart:{userID}`
+    - Base TTL: 15 minutes + random jitter (0-5 minutes)
+    - JSON serialization for cart data
+- Create `cart-service/internal/cache/redis_test.go` - Unit tests
+    - Use testcontainers with `redis:7-alpine`
+    - Test Get/Set/Delete operations
+    - Test cache miss handling
+    - Test TTL with jitter
+- Verification: `go test ./internal/cache/... -v` (all tests pass)
+
+**Step 2: Create Service Layer Without Redis (1 hour)**
+- Create `cart-service/internal/service/cart_service.go`
+    - `CartService` struct with repository dependency
+    - Implement all methods as direct passthroughs to repository:
+        - `GetCart(ctx, userID)` → calls `repo.GetCart()`
+        - `AddItem(ctx, userID, productID, quantity)` → calls `repo.AddItem()`
+        - `UpdateQuantity(ctx, userID, productID, quantity)` → calls `repo.UpdateQuantity()`
+        - `RemoveItem(ctx, userID, productID)` → calls `repo.RemoveItem()`
+        - `ClearCart(ctx, userID)` → calls `repo.ClearCart()`
+- Create `cart-service/internal/service/cart_service_test.go`
+    - Mock repository interface
+    - Test each method calls repository correctly
+    - Test error propagation
+- Verification: `go test ./internal/service/... -v` (all tests pass)
+
+**Step 3: Refactor gRPC Handler to Use Service Layer (1-2 hours)**
+- Modify `cart-service/internal/grpc/handler.go`
+    - Change `CartServiceServer` to use `service.CartService` instead of `repository.CartRepository`
+    - Update all handler methods to call service layer:
+        - `GetCart` → `s.service.GetCart(ctx, req.UserId)`
+        - `AddItem` → `s.service.AddItem(ctx, req.UserId, req.ProductId, req.Quantity)`
+        - `UpdateQuantity` → `s.service.UpdateQuantity(...)`
+        - `RemoveItem` → `s.service.RemoveItem(...)`
+        - `ClearCart` → `s.service.ClearCart(...)`
+    - Keep protobuf conversion logic in handlers
+- Update `cart-service/internal/grpc/handler_test.go`
+    - Change mocks from repository to service layer
+    - Verify all 10 test functions still pass
+- Modify `cart-service/cmd/main.go`
+    - Wire: `repo := repository.New()` → `service := service.New(repo)` → `handler := grpc.New(service)`
+- Verification:
+    - `go test ./internal/grpc/... -v` (10/10 tests pass)
+    - `go run cmd/main.go` (service starts)
+    - Test with grpcurl (functionality unchanged)
+
+**Step 4: Add Redis to Docker Compose (15 minutes)**
+- Create/update `deployments/docker-compose.yml`
+    - Add Redis service with `redis:7-alpine` image
+    - Port: 6379
+    - MaxMemory: 256MB with `allkeys-lru` eviction policy
+- Verification:
+    - `docker-compose up -d redis`
+    - `docker-compose ps` (redis running)
+    - `redis-cli ping` (returns PONG)
+
+**Step 5: Integrate Redis into Service Layer (2 hours)**
+- Modify `cart-service/internal/service/cart_service.go`
+    - Add `cache cache.CartCache` field to `CartService`
+    - Add `sfg singleflight.Group` field for cache stampede prevention
+    - Add `golang.org/x/sync/singleflight` dependency
+    - Update `NewCartService()` to accept cache parameter
+    - Implement cache-aside pattern in `GetCart()`:
+        1. Use singleflight to group concurrent requests
+        2. Check cache first (`cache.Get()`)
+        3. On cache miss, fetch from repository
+        4. Populate cache asynchronously (fire-and-forget)
+        5. Return cart data
+    - Implement write-through invalidation in mutating methods:
+        - `AddItem()`: After repo success → `cache.Delete()`
+        - `UpdateQuantity()`: After repo success → `cache.Delete()`
+        - `RemoveItem()`: After repo success → `cache.Delete()`
+        - `ClearCart()`: After repo success → `cache.Delete()`
+    - Log cache errors but don't fail operations (graceful degradation)
+- Update `cart-service/internal/service/cart_service_test.go`
+    - Add tests for cache hit scenarios
+    - Add tests for cache miss scenarios
+    - Add tests for cache invalidation on writes
+    - Mock both repository and cache interfaces
+- Modify `cart-service/cmd/main.go`
+    - Initialize Redis client with `redis.NewClient()`
+    - Wire cache into service: `cache := cache.NewRedis(redisClient)` → `service := service.New(repo, cache)`
+- Verification:
+    - `go test ./internal/service/... -v` (all cache tests pass)
+    - `REDIS_ADDR=localhost:6379 go run cmd/main.go`
+    - Test cache behavior:
+        - `grpcurl ... GetCart` → `redis-cli KEYS "cart:*"` (cache populated)
+        - `grpcurl ... GetCart` again (should serve from cache - add logging to verify)
+        - `grpcurl ... AddItem` → `redis-cli KEYS "cart:*"` (cache invalidated)
+
+**Step 6: Add Configuration Management (30 minutes)**
+- Modify `cart-service/cmd/main.go`
+    - Create `Config` struct with fields:
+        - `MongoURI` (env: MONGODB_URI, default: mongodb://localhost:27017)
+        - `MongoDBName` (env: MONGODB_DATABASE, default: ecommerce)
+        - `RedisAddr` (env: REDIS_ADDR, default: localhost:6379)
+        - `RedisPassword` (env: REDIS_PASSWORD, default: empty)
+        - `GRPCPort` (env: GRPC_PORT, default: 50052)
+    - Implement `loadConfig()` function with `os.Getenv()` and defaults
+    - Use config values for all connections
+- Verification:
+    - Test with environment variables: `REDIS_ADDR=localhost:6379 MONGODB_URI=mongodb://localhost:27017 go run cmd/main.go`
+    - Service starts successfully with custom config
+
+**Step 7: Integration Testing (1 hour)**
+- Create `cart-service/internal/service/integration_test.go` (optional)
+    - Use testcontainers for both MongoDB and Redis
+    - Test full workflow: GetCart (miss) → populate cache → GetCart (hit) → AddItem (invalidate) → GetCart (miss) → repopulate
+- Manual end-to-end verification:
+    - Start infrastructure: `docker-compose up -d`
+    - Start service: `go run cmd/main.go`
+    - Test workflow with grpcurl + redis-cli verification
+- Verification: Complete cart workflow works with caching
+
+**Implementation Notes:**
+- Each step is independently verifiable before moving to the next
+- Service layer works without Redis (Step 3), then caching is added (Step 5)
+- Cache failures degrade gracefully - service continues working if Redis is down
+- Total implementation time: 7-9 hours focused work
+- This plan prevents "big bang" integration issues by testing each layer in isolation
+
 **Kafka Events (Consumer):**
 - Topic: `checkout-events`
 - Event: `CheckoutCompleted`
@@ -212,9 +344,9 @@ COMPLETED
 **Saga Flow:**
 1. **Create Session**: Generate checkout session with idempotency key
 2. **Reserve Inventory**: Call Inventory Service (sync, 30s timeout)
-   - On failure: Mark FAILED, return error
+    - On failure: Mark FAILED, return error
 3. **Process Payment**: Call Payment Service (sync, 60s timeout)
-   - On failure: Release inventory reservation, mark FAILED
+    - On failure: Release inventory reservation, mark FAILED
 4. **Publish Event**: Write to outbox table (transactional)
 5. **Outbox Poller**: Background job publishes events to Kafka
 6. **Mark Complete**: Update session status to COMPLETED
@@ -651,7 +783,7 @@ ecommerce-platform/
 - Protobuf definitions for Cart and Product services
 - Basic HTTP endpoints in gateway
 
-**Deliverable:** 
+**Deliverable:**
 Users can add/view/edit cart items via REST API
 
 ---
