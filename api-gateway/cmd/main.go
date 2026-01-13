@@ -84,7 +84,7 @@ func main() {
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/cart", func(r chi.Router) {
-			//r.Get("/", cartHandler.GetCart)
+			r.Get("/", cartHandler.GetCart)
 			r.Post("/items", cartHandler.AddItem)
 			//r.Put("/items/{product_id}", cartHandler.UpdateQuantity)
 			//r.Delete("/items/{product_id}", cartHandler.RemoveItem)

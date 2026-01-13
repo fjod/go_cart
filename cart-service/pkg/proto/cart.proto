@@ -26,12 +26,17 @@ message AddCartItemRequest {
   int32 quantity = 3;
 }
 
+message GetCartRequest {
+  int64 user_id = 1;
+}
+
 // Response
-message AddCartItemResponse {
+message CartResponse {
   Cart cart = 1;
 }
 
 // AddCartItem service definition
 service CartService {
-  rpc AddItem(AddCartItemRequest) returns (AddCartItemResponse);
+  rpc AddItem(AddCartItemRequest) returns (CartResponse);
+  rpc GetCart(GetCartRequest) returns (CartResponse);
 }

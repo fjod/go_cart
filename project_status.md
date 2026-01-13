@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 12, 2026
+**Last Updated:** January 13, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -103,9 +103,9 @@ product-service/
 
 ---
 
-#### Cart Service ✅ Mostly Complete
+#### Cart Service ✅ Significantly Complete
 
-**Status:** Repository and gRPC layers implemented and tested, Redis integration and additional endpoints pending
+**Status:** Repository and gRPC layers implemented with 2 working endpoints (AddItem, GetCart), Redis integration and additional endpoints pending
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/cart-service`)
@@ -138,12 +138,22 @@ product-service/
   - github.com/testcontainers/testcontainers-go v0.40.0
   - github.com/testcontainers/testcontainers-go/modules/mongodb v0.40.0
   - github.com/stretchr/testify v1.11.1
-- ✅ gRPC service implementation (cart-service/pkg/proto/cart.proto:1-37, cart-service/internal/grpc/handler.go:1-56)
-  - Protobuf definitions for Cart, CartItem, AddCartItemRequest/Response
-  - AddCartItemService with AddItem RPC endpoint
+- ✅ gRPC service implementation (cart-service/pkg/proto/cart.proto:1-42, cart-service/internal/grpc/handler.go:1-134)
+  - Protobuf definitions for Cart, CartItem, AddCartItemRequest, GetCartRequest, CartResponse
+  - CartService with 2 RPC endpoints (AddItem, GetCart) - commits: 5564f94, d88c94c
   - gRPC handler with product validation via Product Service
   - Server running on port 50052 with reflection support
-  - **Tested:** Successfully adds items to MongoDB cartdb collection
+  - Refactored to use shared CartResponse message type
+  - Helper function `convertCart()` for domain-to-protobuf conversion with proper timestamp formatting
+  - **Tested:** Successfully adds items and retrieves carts from MongoDB cartdb collection
+- ✅ gRPC handler unit tests (cart-service/internal/grpc/handler_test.go:1-209) - **NEW**
+  - 4 test cases covering core functionality (commit: d88c94c, uncommitted)
+  - TestGetCart_Success - validates cart retrieval with multiple items
+  - TestAddItem_Success - validates item addition
+  - TestAddItem_NotFound - validates product not found error handling
+  - TestAddItem_NoStock - validates out-of-stock error handling
+  - Mock implementations for Repository and ProductServiceClient
+  - All tests passing (4/4)
 - ✅ Product Service integration
   - gRPC client connection to Product Service (localhost:50051)
   - Product validation before adding to cart
@@ -153,20 +163,22 @@ product-service/
   - MONGO_URI (default: mongodb://localhost:27017)
   - MONGO_DB_NAME (default: cartdb)
 - ✅ Graceful shutdown handling
+- ✅ Protobuf generation script (genProto.bat) - **NEW** (uncommitted)
+  - Windows batch script for regenerating protobuf code
+  - Generates both .pb.go and _grpc.pb.go files
 
 **Pending:**
-- ⏳ Additional gRPC endpoints
-  - GetCart() - Retrieve user's cart
-  - UpdateQuantity() - Update item quantity
-  - RemoveItem() - Remove item from cart
-  - ClearCart() - Clear entire cart
+- ⏳ Additional gRPC endpoints (2 remaining of 4 planned)
+  - ✅ GetCart() - Retrieve user's cart (COMPLETED)
+  - ⏳ UpdateQuantity() - Update item quantity
+  - ⏳ RemoveItem() - Remove item from cart
+  - ⏳ ClearCart() - Clear entire cart
 - ⏳ Redis caching layer integration
 - ⏳ Kafka consumer for checkout events
 - ⏳ Production hardening
   - Structured logging
   - Request validation improvements
   - Error handling enhancements
-- ⏳ gRPC handler unit tests
 
 **File Structure:**
 ```
@@ -177,8 +189,8 @@ cart-service/
 │   ├── domain/
 │   │   └── cart.go                      ✅ Cart and CartItem entities
 │   ├── grpc/
-│   │   ├── handler.go                   ✅ gRPC service implementation
-│   │   └── handler_test.go              ✅ Unit tests
+│   │   ├── handler.go                   ✅ gRPC service with AddItem & GetCart endpoints
+│   │   └── handler_test.go              ✅ Unit tests (4 tests passing)
 │   └── repository/
 │       ├── repository.go                ✅ Repository interface
 │       ├── mongo_repository.go          ✅ MongoDB implementation
@@ -186,17 +198,18 @@ cart-service/
 │       └── connection.go                ✅ MongoDB connection utility
 ├── pkg/
 │   └── proto/
-│       ├── cart.proto                   ✅ Protobuf definitions
+│       ├── cart.proto                   ✅ Protobuf definitions (2 RPCs)
 │       ├── cart.pb.go                   ✅ Generated code
 │       └── cart_grpc.pb.go              ✅ Generated gRPC code
+├── genProto.bat                         ✅ Protobuf generation script
 └── go.mod                               ✅ Dependencies configured
 ```
 
 ---
 
-#### API Gateway ⚡ In Progress
+#### API Gateway ⚡ Progressing Well
 
-**Status:** Core infrastructure and first handler implemented with comprehensive testing
+**Status:** Core infrastructure with 2 working cart endpoints (AddItem, GetCart), comprehensive testing in place
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/api-gateway`)
@@ -217,7 +230,7 @@ cart-service/
   - MockAuthMiddleware (simulates JWT authentication, line 11-24)
     - Injects user_id as int64(1) into request context
     - Production-ready placeholder for JWT token validation
-- ✅ REST endpoint handlers (api-gateway/internal/http/cart_handler.go:1-155)
+- ✅ REST endpoint handlers (api-gateway/internal/http/cart_handler.go:1-179) - **UPDATED**
   - CartHandler struct with gRPC client injection
   - POST /api/v1/cart/items - AddItem endpoint (line 39-80)
     - User authentication check via context
@@ -225,7 +238,13 @@ cart-service/
     - Business rule validation (product_id > 0, quantity 1-99)
     - gRPC metadata propagation (user-id, request-id)
     - Comprehensive error handling with proper HTTP status codes
-- ✅ gRPC error mapping to HTTP status codes (api-gateway/internal/http/cart_handler.go:113-154)
+  - GET /api/v1/cart - GetCart endpoint (line 82-105) - **NEW** (uncommitted)
+    - Retrieves user's shopping cart
+    - User authentication check via context
+    - gRPC metadata propagation (user-id, request-id)
+    - Returns enriched cart data with all items
+    - HTTP 200 OK on success
+- ✅ gRPC error mapping to HTTP status codes (api-gateway/internal/http/cart_handler.go:137-178)
   - InvalidArgument → 400 Bad Request
   - NotFound → 404 Not Found
   - AlreadyExists → 409 Conflict
@@ -235,19 +254,25 @@ cart-service/
   - Unavailable → 503 Service Unavailable
   - DeadlineExceeded → 504 Gateway Timeout
   - Default → 500 Internal Server Error
-- ✅ Comprehensive unit tests (api-gateway/internal/http/cart_handler_test.go:1-244)
-  - 15 test cases covering all branches and edge cases
-  - ClientMock implementation for gRPC client testing (line 18-33)
+- ✅ Comprehensive unit tests (api-gateway/internal/http/cart_handler_test.go:1-316) - **EXPANDED**
+  - 17 test cases covering all branches and edge cases (increased from 15)
+  - ClientMock implementation for gRPC client testing (updated with GetCart method)
   - Test coverage:
-    * TestAddItem_Success - validates successful cart item addition (line 35-76)
-    * TestAddItem_Unauthorized - tests missing user authentication (line 78-99)
-    * TestAddItem_InvalidJSON - tests malformed request body handling (line 101-122)
-    * TestAddItem_InvalidProductID - tests validation with subtests (zero and negative IDs, line 124-159)
-    * TestAddItem_InvalidQuantity - tests quantity validation with subtests (zero, negative, >99, line 161-197)
-    * TestAddItem_GRPCErrors - tests all 8 gRPC error code mappings (line 199-244)
+    * TestGetCart_Success - validates successful cart retrieval (line 35-67) - **NEW**
+    * TestGetCart_Unauthorized - tests missing authentication for GetCart (line 69-87) - **NEW**
+    * TestAddItem_Success - validates successful cart item addition
+    * TestAddItem_Unauthorized - tests missing user authentication
+    * TestAddItem_InvalidJSON - tests malformed request body handling
+    * TestAddItem_InvalidProductID - tests validation with subtests (zero and negative IDs)
+    * TestAddItem_InvalidQuantity - tests quantity validation with subtests (zero, negative, >99)
+    * TestAddItem_GRPCErrors - tests all 8 gRPC error code mappings
   - Uses httptest.NewRecorder() and httptest.NewRequest() for HTTP mocking
   - Demonstrates proper context propagation with user_id and request_id
-  - All tests passing (15/15)
+  - All tests passing (17/17)
+- ✅ Routing configuration (api-gateway/cmd/main.go:84-91) - **UPDATED**
+  - GET /api/v1/cart route enabled (uncommitted)
+  - POST /api/v1/cart/items route active
+  - Placeholder routes for remaining cart operations
 - ✅ Configuration management (api-gateway/cmd/main.go:24-40)
   - Environment variable support for HTTP_PORT and CART_SERVICE_ADDR
   - Config struct with sensible defaults
@@ -260,10 +285,10 @@ cart-service/
   - github.com/fjod/go_cart/cart-service (for protobuf definitions)
 
 **Pending:**
-- ⏳ Additional cart endpoints
-  - GET /api/v1/cart - Get user's cart
-  - PUT /api/v1/cart/items/{product_id} - Update item quantity
-  - DELETE /api/v1/cart/items/{product_id} - Remove item
+- ⏳ Additional cart endpoints (2 remaining of 4 planned)
+  - ✅ GET /api/v1/cart - Get user's cart (COMPLETED)
+  - ⏳ PUT /api/v1/cart/items/{product_id} - Update item quantity
+  - ⏳ DELETE /api/v1/cart/items/{product_id} - Remove item
 - ⏳ Product Service integration
   - gRPC client connection setup
   - GET /api/v1/products - List products
@@ -286,11 +311,11 @@ cart-service/
 ```
 api-gateway/
 ├── cmd/
-│   └── main.go                          ✅ HTTP server with chi router, graceful shutdown
+│   └── main.go                          ✅ HTTP server with chi router, 2 active cart routes
 ├── internal/
 │   └── http/
-│       ├── cart_handler.go              ✅ AddItem handler with validation
-│       ├── cart_handler_test.go         ✅ 15 comprehensive unit tests (all passing)
+│       ├── cart_handler.go              ✅ AddItem & GetCart handlers (2 endpoints)
+│       ├── cart_handler_test.go         ✅ 17 comprehensive unit tests (all passing)
 │       └── middleware.go                ✅ Auth and RequestID middlewares
 ├── go.mod                               ✅ Dependencies configured
 └── go.sum                               ⏳ Auto-generated (not committed)
@@ -394,36 +419,40 @@ api-gateway/
 
 ### Immediate Priorities
 
-1. **Expand API Gateway** 🎯
+1. **Complete Cart Service gRPC Layer** 🎯
+   - ✅ Define protobuf messages and service (DONE)
+   - ✅ Implement gRPC handler for AddItem (DONE)
+   - ✅ Implement gRPC handler for GetCart (DONE)
+   - ✅ Set up gRPC server (DONE)
+   - ✅ Add unit tests for gRPC handler (DONE - 4 tests passing)
+   - ⏳ Implement remaining endpoints (2 of 4 remaining):
+     - UpdateQuantity() - Update item quantity
+     - RemoveItem() - Remove item from cart
+     - ClearCart() - Clear entire cart (optional for Phase 1)
+   - ⏳ Integrate Redis caching layer
+   - ⏳ Add integration tests with real MongoDB
+
+2. **Complete API Gateway Cart Endpoints** 🎯
    - ✅ Set up HTTP server with chi router (DONE)
    - ✅ Create gRPC client for Cart Service (DONE)
    - ✅ Implement POST /api/v1/cart/items endpoint (DONE)
-   - ✅ Add comprehensive unit tests for AddItem handler (DONE - 15 tests passing)
+   - ✅ Implement GET /api/v1/cart endpoint (DONE)
+   - ✅ Add comprehensive unit tests (DONE - 17 tests passing)
    - ✅ Add authentication and request ID middleware (DONE)
-   - ⏳ Implement remaining cart endpoints:
-     - GET /api/v1/cart - Retrieve user's cart
+   - ⏳ Implement remaining cart endpoints (2 of 4 remaining):
      - PUT /api/v1/cart/items/{product_id} - Update quantity
      - DELETE /api/v1/cart/items/{product_id} - Remove item
+   - ⏳ Add integration tests with real Cart Service running
+   - ⏳ Replace MockAuthMiddleware with real JWT validation
+
+3. **Add Product Service Integration to API Gateway**
    - ⏳ Create gRPC client for Product Service
    - ⏳ Implement product endpoints:
      - GET /api/v1/products - List all products
      - GET /api/v1/products/{id} - Get product details
-   - ⏳ Add integration tests with real services running
-   - ⏳ Replace MockAuthMiddleware with real JWT validation
+   - ⏳ Add unit tests for product handlers
 
-2. **Complete Cart Service gRPC Layer**
-   - ✅ Define protobuf messages and service (DONE)
-   - ✅ Implement gRPC handler for AddItem (DONE)
-   - ✅ Set up gRPC server (DONE)
-   - ⏳ Implement remaining endpoints:
-     - GetCart() - Retrieve user's cart
-     - UpdateQuantity() - Update item quantity
-     - RemoveItem() - Remove item from cart
-     - ClearCart() - Clear entire cart
-   - ⏳ Add unit tests for gRPC handler
-   - ⏳ Integrate Redis caching layer
-
-3. **Production Hardening for Product Service** ⚠️
+4. **Production Hardening for Product Service** ⚠️
    - Fix critical bug: Remove pointer to interface (handler.go:15, 18)
    - ✅ Add environment variable configuration (DONE)
    - ⏳ Implement graceful shutdown
@@ -432,7 +461,7 @@ api-gateway/
    - ⏳ Fix price precision (use cents or decimal)
    - ⏳ Update timestamp to use google.protobuf.Timestamp
 
-4. **Complete Product Service CRUD Operations**
+5. **Complete Product Service CRUD Operations**
    - ✅ Implement `GetProduct(id)` endpoint (DONE)
    - ⏳ Implement `CreateProduct()` endpoint
    - ⏳ Implement `UpdateProduct()` endpoint
@@ -440,7 +469,7 @@ api-gateway/
    - ⏳ Add pagination to `GetProducts()`
    - ⏳ Add unit tests for gRPC handler
 
-5. **Expand Docker Compose Infrastructure**
+6. **Expand Docker Compose Infrastructure**
    - Add PostgreSQL container
    - Add Kafka + Zookeeper containers
    - Add service containers
@@ -464,22 +493,31 @@ api-gateway/
   - Full CRUD operation tests
   - Context cancellation tests
   - Edge case coverage (not found, duplicate items, etc.)
-- ⏳ gRPC handler unit tests pending
+- ✅ gRPC handler unit tests implemented (cart-service/internal/grpc/handler_test.go) - **COMPLETED**
+  - 4 test cases covering core gRPC functionality
+  - Mock implementations for Repository and ProductServiceClient
+  - TestGetCart_Success - validates cart retrieval with multiple items - **NEW**
+  - TestAddItem_Success - validates item addition
+  - TestAddItem_NotFound - validates product not found error handling
+  - TestAddItem_NoStock - validates out-of-stock error handling
+  - All tests passing (4/4)
 - ⏳ Integration tests pending
 
 ### API Gateway
-- ✅ HTTP handler unit tests implemented (api-gateway/internal/http/cart_handler_test.go)
-  - 15 test cases covering all branches
-  - Mock gRPC client implementation (ClientMock)
+- ✅ HTTP handler unit tests expanded (api-gateway/internal/http/cart_handler_test.go) - **UPDATED**
+  - 17 test cases covering all branches (increased from 15)
+  - Mock gRPC client implementation (ClientMock) updated with GetCart method
   - Test coverage includes:
-    * Success path validation
+    * TestGetCart_Success - validates successful cart retrieval - **NEW**
+    * TestGetCart_Unauthorized - tests missing authentication for GetCart - **NEW**
+    * Success path validation for AddItem
     * Authentication failures
     * Invalid JSON handling
     * Input validation (product_id, quantity)
     * gRPC error code mapping to HTTP status codes (8 scenarios)
   - Uses httptest package for HTTP mocking
   - Context propagation testing (user_id, request_id)
-  - All tests passing (15/15)
+  - All tests passing (17/17)
 - ⏳ Integration tests with real Cart Service pending
 - ⏳ End-to-end workflow tests pending
 
@@ -522,8 +560,8 @@ grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
 
 ### Cart Service
 **Build:** ✅ Compiles successfully
-**Run:** ✅ gRPC server running on port 50052
-**Test:** ✅ Repository integration tests passing (requires Docker)
+**Run:** ✅ gRPC server running on port 50052 with 2 active endpoints (AddItem, GetCart)
+**Test:** ✅ Repository integration tests passing (requires Docker), gRPC handler unit tests passing (4/4)
 
 **How to Run:**
 ```bash
@@ -533,9 +571,9 @@ go run cmd/main.go
 
 **Expected Output:**
 ```
-2026/01/08 [timestamp] Connected to MongoDB at mongodb://localhost:27017
-2026/01/08 [timestamp] Connected to product service at localhost:50051
-2026/01/08 [timestamp] Cart service listening on port 50052
+2026/01/13 [timestamp] Connected to MongoDB at mongodb://localhost:27017
+2026/01/13 [timestamp] Connected to product service at localhost:50051
+2026/01/13 [timestamp] Cart service listening on port 50052
 ```
 
 **How to Test:**
@@ -544,9 +582,15 @@ go run cmd/main.go
 cd cart-service
 go test ./internal/repository/ -v
 
-# Test gRPC endpoint with grpcurl
+# Run gRPC handler unit tests
+cd cart-service
+go test ./internal/grpc/ -v
+# Output: 4/4 tests passing (TestGetCart_Success, TestAddItem_Success, TestAddItem_NotFound, TestAddItem_NoStock)
+
+# Test gRPC endpoints with grpcurl
 grpcurl -plaintext localhost:50052 list
-grpcurl -plaintext -d "{\"user_id\": 1, \"product_id\": 1, \"quantity\": 2}" localhost:50052 cart.AddCartItemService/AddItem
+grpcurl -plaintext -d "{\"user_id\": 1, \"product_id\": 1, \"quantity\": 2}" localhost:50052 cart.CartService/AddItem
+grpcurl -plaintext -d "{\"user_id\": 1}" localhost:50052 cart.CartService/GetCart
 
 # Verify in MongoDB
 mongosh cartdb --eval "db.carts.find().pretty()"
@@ -554,8 +598,8 @@ mongosh cartdb --eval "db.carts.find().pretty()"
 
 ### API Gateway
 **Build:** ✅ Compiles successfully
-**Run:** ✅ HTTP server running on port 8080
-**Test:** ✅ Handler unit tests passing (15/15)
+**Run:** ✅ HTTP server running on port 8080 with 2 active cart endpoints (AddItem, GetCart)
+**Test:** ✅ Handler unit tests passing (17/17)
 
 **How to Run:**
 ```bash
@@ -565,7 +609,7 @@ go run cmd/main.go
 
 **Expected Output:**
 ```
-2026/01/12 [timestamp] API Gateway starting on :8080
+2026/01/13 [timestamp] API Gateway starting on :8080
 ```
 
 **How to Test:**
@@ -573,11 +617,16 @@ go run cmd/main.go
 # Run handler unit tests
 cd api-gateway
 go test ./internal/http/ -v
+# Output: 17/17 tests passing (includes 2 new GetCart tests)
 
-# Test REST endpoint with curl (requires Cart Service running on port 50052)
+# Test REST endpoints with curl (requires Cart Service running on port 50052)
+# Add item to cart
 curl -X POST http://localhost:8080/api/v1/cart/items \
   -H "Content-Type: application/json" \
   -d '{"product_id": 1, "quantity": 2}'
+
+# Get cart
+curl -X GET http://localhost:8080/api/v1/cart
 
 # Health check
 curl http://localhost:8080/health
@@ -591,37 +640,39 @@ curl http://localhost:8080/health
 - Pure Go SQLite driver chosen for better cross-platform compatibility
 - Migration files use UTF-8 with BOM encoding
 - All services successfully running in parallel:
-  - Product Service: localhost:50051 (gRPC)
-  - Cart Service: localhost:50052 (gRPC)
-  - API Gateway: localhost:8080 (HTTP/REST)
+  - Product Service: localhost:50051 (gRPC) - 2 endpoints (GetProducts, GetProduct)
+  - Cart Service: localhost:50052 (gRPC) - 2 endpoints (AddItem, GetCart)
+  - API Gateway: localhost:8080 (HTTP/REST) - 2 active cart routes (POST /items, GET /)
 - Cart Service successfully validated against Product Service and persisting to MongoDB
 - API Gateway successfully communicates with Cart Service via gRPC
-- Test pattern established: httptest for HTTP handlers, testcontainers for integration tests
+- Test pattern established: httptest for HTTP handlers, testcontainers for integration tests, mock implementations for gRPC unit tests
+- Service naming consistency achieved: Changed AddCartItemService → CartService (commit d88c94c)
+- Protobuf generation automation: Added genProto.bat script for Cart Service
 
 ---
 
 ## Progress Summary
 
-**Overall Completion:** ~42%
+**Overall Completion:** ~48%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
 - ✅ Product Service Repository Layer: 100%
-- ✅ Product Service gRPC Layer: 80% (GetProducts complete, CRUD pending)
+- ✅ Product Service gRPC Layer: 80% (GetProducts, GetProduct complete; CRUD pending)
 - ✅ Product Service Tests: 50% (Repository done, handler pending)
 - ⚠️ Product Service Production Readiness: 60% (env vars added, graceful shutdown needed)
 - ✅ Cart Service Database Layer: 100%
 - ✅ Cart Service Domain Layer: 100%
 - ✅ Cart Service Repository Layer: 100%
-- ✅ Cart Service gRPC Layer: 40% (AddItem complete and tested, 4 endpoints pending)
-- ✅ Cart Service Tests: 60% (Repository integration tests done, gRPC handler pending)
+- ✅ Cart Service gRPC Layer: 50% (AddItem, GetCart complete and tested; 2 endpoints pending)
+- ✅ Cart Service Tests: 80% (Repository integration tests done, gRPC handler unit tests done)
 - ✅ Cart Service Production Readiness: 60% (env vars, graceful shutdown done)
 - ❌ Cart Service Redis Integration: 0%
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
 - ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting pending)
-- ✅ API Gateway Cart Endpoints: 25% (AddItem done, 3 endpoints pending)
+- ✅ API Gateway Cart Endpoints: 50% (AddItem, GetCart done; 2 endpoints pending)
 - ✅ API Gateway Product Endpoints: 0%
-- ✅ API Gateway Tests: 60% (HTTP handler unit tests done, integration tests pending)
+- ✅ API Gateway Tests: 70% (HTTP handler unit tests expanded to 17, integration tests pending)
 - ❌ Checkout Service: 0%
 - ❌ Orders Service: 0%
 - ❌ Inventory Service: 0%
@@ -630,12 +681,49 @@ curl http://localhost:8080/health
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
-- Cart Service ~70% complete (AddItem endpoint working, additional endpoints pending)
-- API Gateway ~35% complete (first endpoint with comprehensive testing, additional endpoints pending)
+- Cart Service ~78% complete (2 of 4 endpoints working with full test coverage)
+- API Gateway ~45% complete (2 of 4 cart endpoints with comprehensive testing)
 - Docker Infrastructure ~40% complete (MongoDB and Redis done)
 
-**Recent Progress (January 12, 2026):**
-- ✅ Implemented API Gateway HTTP server with go-chi/chi router
+**Recent Progress (January 13, 2026):**
+
+Since last status update (January 12):
+
+*Committed Changes:*
+- ✅ Fixed Cart Service naming consistency: AddCartItemService → CartService (commit d88c94c)
+  - Updated cart.proto service definition
+  - Updated API Gateway gRPC client calls
+  - Regenerated protobuf code for both services
+  - 7 files modified across Cart Service and API Gateway
+
+*Uncommitted Changes (in progress):*
+- ✅ Implemented Cart Service GetCart endpoint (cart-service/internal/grpc/handler.go)
+  - Added GetCart RPC handler with user_id validation
+  - Created convertCart() helper function for domain-to-protobuf conversion
+  - Refactored AddItem to use shared CartResponse message type
+  - Defined timeFormat constant for consistent timestamp formatting
+- ✅ Added Cart Service gRPC handler unit tests (cart-service/internal/grpc/handler_test.go)
+  - TestGetCart_Success - validates cart retrieval with multiple items (NEW)
+  - 4/4 tests passing (TestGetCart_Success, TestAddItem_Success, TestAddItem_NotFound, TestAddItem_NoStock)
+- ✅ Updated Cart Service protobuf definitions (cart-service/pkg/proto/cart.proto)
+  - Added GetCartRequest message
+  - Renamed AddCartItemResponse → CartResponse for reusability
+  - Added GetCart RPC endpoint to CartService
+- ✅ Implemented API Gateway GetCart endpoint (api-gateway/internal/http/cart_handler.go)
+  - GET /api/v1/cart handler with authentication and metadata propagation
+  - Returns HTTP 200 OK with cart data
+- ✅ Expanded API Gateway unit tests (api-gateway/internal/http/cart_handler_test.go)
+  - TestGetCart_Success - validates successful cart retrieval (NEW)
+  - TestGetCart_Unauthorized - tests missing authentication (NEW)
+  - Updated ClientMock to include GetCart method
+  - 17/17 tests passing (increased from 15)
+- ✅ Enabled GetCart route in API Gateway (api-gateway/cmd/main.go)
+  - Uncommented GET /api/v1/cart route
+- ✅ Added genProto.bat script for Cart Service (cart-service/genProto.bat)
+  - Windows batch script for protobuf code generation automation
+
+*Previous Session (January 12, 2026):*
+- ✅ Implemented API Gateway HTTP server with go-chi/chi router (commit 5564f94)
 - ✅ Created comprehensive unit tests for API Gateway AddItem handler (15 tests, all passing)
 - ✅ Implemented middleware stack (auth mock, request ID, timeout, compression)
 - ✅ Established gRPC client connection to Cart Service

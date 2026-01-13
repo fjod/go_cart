@@ -73,6 +73,37 @@ func (m *mockProductServiceClient) GetProducts(ctx context.Context, in *productp
 	return nil, nil
 }
 
+func TestGetCart_Success(t *testing.T) {
+	mockRepo := &mockRepository{
+		cart: &domain.Cart{
+			Items: []domain.CartItem{
+				{ProductID: 1, Quantity: 5},
+				{ProductID: 2, Quantity: 10},
+			},
+			UserID:    "123",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	mockProductClient := &mockProductServiceClient{}
+
+	server := NewCartServiceServer(mockRepo, mockProductClient)
+	ret, err := server.GetCart(context.Background(), &pb.GetCartRequest{
+		UserId: 123,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, ret)
+	t.Logf("Received cart response: %v", ret.Cart)
+	l := len(ret.Cart.Cart)
+	assert.Equal(t, l, 2)
+	assert.Equal(t, ret.Cart.Cart[0].ProductId, int64(1))
+	assert.Equal(t, ret.Cart.Cart[0].Quantity, int32(5))
+	assert.Equal(t, ret.Cart.Cart[1].ProductId, int64(2))
+	assert.Equal(t, ret.Cart.Cart[1].Quantity, int32(10))
+}
+
 func TestAddItem_Success(t *testing.T) {
 	mockRepo := &mockRepository{
 		cart: &domain.Cart{

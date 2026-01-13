@@ -80,6 +80,30 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, resp.Cart)
 }
 
+func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+	defer cancel()
+
+	userID := getUserIDFromContext(r.Context())
+	if userID == 0 {
+		respondError(w, http.StatusUnauthorized, "unauthorized", "missing user authentication")
+		return
+	}
+	// Propagate metadata
+	ctx = metadata.AppendToOutgoingContext(ctx, "user-id", fmt.Sprint(userID), "request-id", getRequestID(r.Context()))
+
+	// Call gRPC service
+	resp, err := h.cartClient.GetCart(ctx, &pb.GetCartRequest{
+		UserId: userID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, resp.Cart)
+}
+
 func getUserIDFromContext(ctx context.Context) int64 {
 	if userID, ok := ctx.Value("user_id").(int64); ok {
 		return userID

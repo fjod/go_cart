@@ -20,16 +20,79 @@ type ClientMock struct {
 	err  error
 }
 
-func (c ClientMock) AddItem(
-	ctx context.Context,
-	in *pb.AddCartItemRequest,
-	opts ...grpc.CallOption) (*pb.AddCartItemResponse, error) {
+func (c ClientMock) GetCart(ctx context.Context, in *pb.GetCartRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
 	if c.err != nil {
 		return nil, c.err
 	}
-	return &pb.AddCartItemResponse{
+	return &pb.CartResponse{
 		Cart: c.cart,
 	}, nil
+}
+
+func (c ClientMock) AddItem(ctx context.Context, in *pb.AddCartItemRequest, opts ...grpc.CallOption) (*pb.CartResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &pb.CartResponse{
+		Cart: c.cart,
+	}, nil
+}
+
+func TestGetCart_Success(t *testing.T) {
+	clientMock := ClientMock{
+		cart: &pb.Cart{
+			UserId: 1,
+			Cart: []*pb.CartItem{
+				{ProductId: 1, Quantity: 2},
+			},
+		},
+		err: nil,
+	}
+
+	handler := NewCartHandler(clientMock, 5*time.Second)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/", nil)
+
+	// Add user_id to context
+	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	request = request.WithContext(ctx)
+
+	handler.GetCart(recorder, request)
+
+	// Verify response
+	if recorder.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, recorder.Code)
+	}
+
+	var response pb.Cart
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if response.UserId != 1 {
+		t.Errorf("Expected user_id 1, got %d", response.UserId)
+	}
+}
+
+func TestGetCart_Unauthorized(t *testing.T) {
+	clientMock := ClientMock{cart: &pb.Cart{}, err: nil}
+	handler := NewCartHandler(clientMock, 5*time.Second)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", "/", nil)
+	// No user_id in context
+
+	handler.GetCart(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnauthorized, recorder.Code)
+	}
+
+	var response ErrorResponse
+	json.NewDecoder(recorder.Body).Decode(&response)
+	if response.Code != "unauthorized" {
+		t.Errorf("Expected error code 'unauthorized', got '%s'", response.Code)
+	}
 }
 
 func TestAddItem_Success(t *testing.T) {

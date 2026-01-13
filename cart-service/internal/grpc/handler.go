@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const timeFormat string = "2006-01-02T15:04:05Z07:00"
+
 type CartServiceServer struct {
 	pb.UnimplementedCartServiceServer
 	repo          db.CartRepository
@@ -26,9 +28,50 @@ func NewCartServiceServer(repo db.CartRepository, productClient productpb.Produc
 	}
 }
 
+func convertCart(c domain.Cart, userId int64) *pb.Cart {
+	cart := &pb.Cart{
+		Id:        c.ID,
+		UserId:    userId, // Use the request user_id
+		Cart:      make([]*pb.CartItem, len(c.Items)),
+		CreatedAt: c.CreatedAt.Format(timeFormat),
+		UpdatedAt: c.UpdatedAt.Format(timeFormat),
+	}
+
+	for i, item := range c.Items {
+		cart.Cart[i] = &pb.CartItem{
+			ProductId: item.ProductID,
+			Quantity:  int32(item.Quantity),
+			AddedAt:   item.AddedAt.Format(timeFormat),
+		}
+	}
+
+	return cart
+}
+
+func (s *CartServiceServer) GetCart(
+	ctx context.Context,
+	req *pb.GetCartRequest) (*pb.CartResponse, error) {
+
+	if req.UserId <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "user_id must be greater than 0")
+	}
+
+	userID := fmt.Sprintf("%d", req.UserId)
+	cart, err := s.repo.GetCart(ctx, userID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
+	}
+
+	protoCart := convertCart(*cart, req.UserId)
+
+	return &pb.CartResponse{
+		Cart: protoCart,
+	}, nil
+}
+
 func (s *CartServiceServer) AddItem(
 	ctx context.Context,
-	req *pb.AddCartItemRequest) (*pb.AddCartItemResponse, error) {
+	req *pb.AddCartItemRequest) (*pb.CartResponse, error) {
 
 	// Validate input
 	if req.ProductId <= 0 {
@@ -83,23 +126,9 @@ func (s *CartServiceServer) AddItem(
 		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
 	}
 
-	protoCart := &pb.Cart{
-		Id:        cart.ID,
-		UserId:    req.UserId, // Use the request user_id
-		Cart:      make([]*pb.CartItem, len(cart.Items)),
-		CreatedAt: cart.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: cart.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	}
+	protoCart := convertCart(*cart, req.UserId)
 
-	for i, item := range cart.Items {
-		protoCart.Cart[i] = &pb.CartItem{
-			ProductId: item.ProductID,
-			Quantity:  int32(item.Quantity),
-			AddedAt:   item.AddedAt.Format("2006-01-02T15:04:05Z07:00"),
-		}
-	}
-
-	return &pb.AddCartItemResponse{
+	return &pb.CartResponse{
 		Cart: protoCart,
 	}, nil
 }
