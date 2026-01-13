@@ -32,6 +32,6 @@ message AddCartItemResponse {
 }
 
 // AddCartItem service definition
-service AddCartItemService {
+service CartService {
   rpc AddItem(AddCartItemRequest) returns (AddCartItemResponse);
 }

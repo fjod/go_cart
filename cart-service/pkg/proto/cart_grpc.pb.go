@@ -19,105 +19,105 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AddCartItemService_AddItem_FullMethodName = "/cart.AddCartItemService/AddItem"
+	CartService_AddItem_FullMethodName = "/cart.CartService/AddItem"
 )
 
-// AddCartItemServiceClient is the client API for AddCartItemService service.
+// CartServiceClient is the client API for CartService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // AddCartItem service definition
-type AddCartItemServiceClient interface {
+type CartServiceClient interface {
 	AddItem(ctx context.Context, in *AddCartItemRequest, opts ...grpc.CallOption) (*AddCartItemResponse, error)
 }
 
-type addCartItemServiceClient struct {
+type cartServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewAddCartItemServiceClient(cc grpc.ClientConnInterface) AddCartItemServiceClient {
-	return &addCartItemServiceClient{cc}
+func NewCartServiceClient(cc grpc.ClientConnInterface) CartServiceClient {
+	return &cartServiceClient{cc}
 }
 
-func (c *addCartItemServiceClient) AddItem(ctx context.Context, in *AddCartItemRequest, opts ...grpc.CallOption) (*AddCartItemResponse, error) {
+func (c *cartServiceClient) AddItem(ctx context.Context, in *AddCartItemRequest, opts ...grpc.CallOption) (*AddCartItemResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AddCartItemResponse)
-	err := c.cc.Invoke(ctx, AddCartItemService_AddItem_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, CartService_AddItem_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// AddCartItemServiceServer is the server API for AddCartItemService service.
-// All implementations must embed UnimplementedAddCartItemServiceServer
+// CartServiceServer is the server API for CartService service.
+// All implementations must embed UnimplementedCartServiceServer
 // for forward compatibility.
 //
 // AddCartItem service definition
-type AddCartItemServiceServer interface {
+type CartServiceServer interface {
 	AddItem(context.Context, *AddCartItemRequest) (*AddCartItemResponse, error)
-	mustEmbedUnimplementedAddCartItemServiceServer()
+	mustEmbedUnimplementedCartServiceServer()
 }
 
-// UnimplementedAddCartItemServiceServer must be embedded to have
+// UnimplementedCartServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedAddCartItemServiceServer struct{}
+type UnimplementedCartServiceServer struct{}
 
-func (UnimplementedAddCartItemServiceServer) AddItem(context.Context, *AddCartItemRequest) (*AddCartItemResponse, error) {
+func (UnimplementedCartServiceServer) AddItem(context.Context, *AddCartItemRequest) (*AddCartItemResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddItem not implemented")
 }
-func (UnimplementedAddCartItemServiceServer) mustEmbedUnimplementedAddCartItemServiceServer() {}
-func (UnimplementedAddCartItemServiceServer) testEmbeddedByValue()                            {}
+func (UnimplementedCartServiceServer) mustEmbedUnimplementedCartServiceServer() {}
+func (UnimplementedCartServiceServer) testEmbeddedByValue()                     {}
 
-// UnsafeAddCartItemServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to AddCartItemServiceServer will
+// UnsafeCartServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to CartServiceServer will
 // result in compilation errors.
-type UnsafeAddCartItemServiceServer interface {
-	mustEmbedUnimplementedAddCartItemServiceServer()
+type UnsafeCartServiceServer interface {
+	mustEmbedUnimplementedCartServiceServer()
 }
 
-func RegisterAddCartItemServiceServer(s grpc.ServiceRegistrar, srv AddCartItemServiceServer) {
-	// If the following call panics, it indicates UnimplementedAddCartItemServiceServer was
+func RegisterCartServiceServer(s grpc.ServiceRegistrar, srv CartServiceServer) {
+	// If the following call panics, it indicates UnimplementedCartServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&AddCartItemService_ServiceDesc, srv)
+	s.RegisterService(&CartService_ServiceDesc, srv)
 }
 
-func _AddCartItemService_AddItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _CartService_AddItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AddCartItemRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AddCartItemServiceServer).AddItem(ctx, in)
+		return srv.(CartServiceServer).AddItem(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AddCartItemService_AddItem_FullMethodName,
+		FullMethod: CartService_AddItem_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AddCartItemServiceServer).AddItem(ctx, req.(*AddCartItemRequest))
+		return srv.(CartServiceServer).AddItem(ctx, req.(*AddCartItemRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// AddCartItemService_ServiceDesc is the grpc.ServiceDesc for AddCartItemService service.
+// CartService_ServiceDesc is the grpc.ServiceDesc for CartService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var AddCartItemService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "cart.AddCartItemService",
-	HandlerType: (*AddCartItemServiceServer)(nil),
+var CartService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "cart.CartService",
+	HandlerType: (*CartServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "AddItem",
-			Handler:    _AddCartItemService_AddItem_Handler,
+			Handler:    _CartService_AddItem_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

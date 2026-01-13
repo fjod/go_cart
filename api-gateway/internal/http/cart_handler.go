@@ -14,11 +14,11 @@ import (
 )
 
 type CartHandler struct {
-	cartClient pb.AddCartItemServiceClient
+	cartClient pb.CartServiceClient
 	timeout    time.Duration
 }
 
-func NewCartHandler(cartClient pb.AddCartItemServiceClient, timeout time.Duration) *CartHandler {
+func NewCartHandler(cartClient pb.CartServiceClient, timeout time.Duration) *CartHandler {
 	return &CartHandler{
 		cartClient: cartClient,
 		timeout:    timeout,

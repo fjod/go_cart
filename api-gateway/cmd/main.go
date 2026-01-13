@@ -60,7 +60,7 @@ func main() {
 	}
 	defer cartServiceConn.Close()
 
-	cartClient := cartpb.NewAddCartItemServiceClient(cartServiceConn)
+	cartClient := cartpb.NewCartServiceClient(cartServiceConn)
 
 	cartHandler := h.NewCartHandler(cartClient, cfg.RequestTimeout)
 

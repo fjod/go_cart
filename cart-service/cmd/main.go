@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	cart_grpc "github.com/fjod/go_cart/cart-service/internal/grpc"
+	cartgrpc "github.com/fjod/go_cart/cart-service/internal/grpc"
 	"github.com/fjod/go_cart/cart-service/internal/repository"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
@@ -50,7 +50,7 @@ func main() {
 	log.Printf("Connected to product service at %s", productServiceAddr)
 
 	// Create cart service server with both repository and product client
-	cartServer := cart_grpc.NewCartServiceServer(repo, productClient)
+	cartServer := cartgrpc.NewCartServiceServer(repo, productClient)
 
 	// Set up gRPC server for cart service
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cartServicePort))
@@ -59,7 +59,7 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterAddCartItemServiceServer(grpcServer, cartServer)
+	pb.RegisterCartServiceServer(grpcServer, cartServer)
 
 	// Enable reflection for grpcurl/grpcui
 	reflection.Register(grpcServer)

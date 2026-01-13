@@ -14,7 +14,7 @@ import (
 )
 
 type CartServiceServer struct {
-	pb.UnimplementedAddCartItemServiceServer
+	pb.UnimplementedCartServiceServer
 	repo          db.CartRepository
 	productClient productpb.ProductServiceClient
 }

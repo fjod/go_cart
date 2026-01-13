@@ -289,8 +289,8 @@ const file_pkg_proto_cart_proto_rawDesc = "" +
 	"\bquantity\x18\x03 \x01(\x05R\bquantity\"5\n" +
 	"\x13AddCartItemResponse\x12\x1e\n" +
 	"\x04cart\x18\x01 \x01(\v2\n" +
-	".cart.CartR\x04cart2T\n" +
-	"\x12AddCartItemService\x12>\n" +
+	".cart.CartR\x04cart2M\n" +
+	"\vCartService\x12>\n" +
 	"\aAddItem\x12\x18.cart.AddCartItemRequest\x1a\x19.cart.AddCartItemResponseB0Z.github.com/fjod/go_cart/cart-service/pkg/protob\x06proto3"
 
 var (
@@ -315,8 +315,8 @@ var file_pkg_proto_cart_proto_goTypes = []any{
 var file_pkg_proto_cart_proto_depIdxs = []int32{
 	0, // 0: cart.Cart.cart:type_name -> cart.CartItem
 	1, // 1: cart.AddCartItemResponse.cart:type_name -> cart.Cart
-	2, // 2: cart.AddCartItemService.AddItem:input_type -> cart.AddCartItemRequest
-	3, // 3: cart.AddCartItemService.AddItem:output_type -> cart.AddCartItemResponse
+	2, // 2: cart.CartService.AddItem:input_type -> cart.AddCartItemRequest
+	3, // 3: cart.CartService.AddItem:output_type -> cart.AddCartItemResponse
 	3, // [3:4] is the sub-list for method output_type
 	2, // [2:3] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
