@@ -76,7 +76,7 @@ func (m *mockRepository) DeleteCart(_ context.Context, _ string) error {
 }
 
 type mockCache struct {
-	m    *sync.RWMutex
+	m    sync.RWMutex
 	cart *domain.Cart
 	err  error
 }
@@ -128,7 +128,6 @@ func TestGetCart_Success(t *testing.T) {
 	}
 	mockC := &mockCache{
 		cart: nil,
-		m:    &sync.RWMutex{},
 	}
 
 	sut := NewCartService(mockRepo, mockC)
@@ -155,7 +154,6 @@ func TestGetCart_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{
 		cart: nil,
-		m:    &sync.RWMutex{},
 	}
 
 	sut := NewCartService(mockRepo, mockC)
