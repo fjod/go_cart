@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,11 +76,14 @@ func (m *mockRepository) DeleteCart(_ context.Context, _ string) error {
 }
 
 type mockCache struct {
+	m    *sync.RWMutex
 	cart *domain.Cart
 	err  error
 }
 
 func (m *mockCache) Get(context.Context, string) (*domain.Cart, error) {
+	m.m.RLock()
+	defer m.m.RUnlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -90,13 +94,23 @@ func (m *mockCache) Get(context.Context, string) (*domain.Cart, error) {
 }
 
 func (m *mockCache) Set(_ context.Context, _ string, cart *domain.Cart) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	m.cart = cart
 	return m.err
 }
 
 func (m *mockCache) Delete(context.Context, string) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	m.cart = nil
 	return m.err
+}
+
+func (m *mockCache) getCart() *domain.Cart {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	return m.cart
 }
 
 func TestGetCart_Success(t *testing.T) {
@@ -114,6 +128,7 @@ func TestGetCart_Success(t *testing.T) {
 	}
 	mockC := &mockCache{
 		cart: nil,
+		m:    &sync.RWMutex{},
 	}
 
 	sut := NewCartService(mockRepo, mockC)
@@ -129,8 +144,8 @@ func TestGetCart_Success(t *testing.T) {
 	assert.Equal(t, 10, ret.Items[1].Quantity)
 
 	require.Eventually(t, func() bool {
-		return assert.NotNil(t, mockC.cart)
-	}, 1*time.Second, 50*time.Millisecond, "cart was not in cache in 1 second")
+		return mockC.getCart() != nil
+	}, 100*time.Millisecond, 10*time.Millisecond, "cart was not set in cache")
 }
 
 func TestGetCart_RepoError(t *testing.T) {
@@ -140,6 +155,7 @@ func TestGetCart_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{
 		cart: nil,
+		m:    &sync.RWMutex{},
 	}
 
 	sut := NewCartService(mockRepo, mockC)
