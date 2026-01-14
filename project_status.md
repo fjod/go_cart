@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 13, 2026
+**Last Updated:** January 14, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -179,8 +179,46 @@ product-service/
   - Windows batch script for regenerating protobuf code
   - Generates both .pb.go and _grpc.pb.go files
 
-**Pending:**
-- ⏳ Redis caching layer integration
+**Redis Caching Layer - Step 1/7 Complete:**
+- ✅ **Cache interface and Redis implementation** (cart-service/internal/cache/)
+  - cache.go - CartCache interface with Get/Set/Delete methods and ErrCacheMiss sentinel
+  - redis.go - RedisCache implementation using github.com/redis/go-redis/v9
+  - Key format: `cart:{userID}`
+  - Base TTL: 15 minutes + random jitter (0-5 minutes) to prevent thundering herd
+  - JSON serialization for cart data
+- ✅ **Comprehensive unit tests** (cart-service/internal/cache/redis_test.go)
+  - 8 test cases using miniredis (in-memory Redis for testing)
+  - TestGet_Success - validates cache retrieval
+  - TestGet_CacheMiss - validates ErrCacheMiss handling
+  - TestGet_InvalidJSON - validates corrupted data error handling
+  - TestSet_Success - validates cache storage
+  - TestSet_WithTTL - validates TTL with jitter (15-20 min range)
+  - TestDelete_Success - validates cache invalidation
+  - TestDelete_NonExistentKey - validates no-error on missing keys
+  - TestCacheKey_Format - validates key format
+  - **All tests passing (8/8)**
+- ✅ **Dependencies installed**
+  - github.com/redis/go-redis/v9 - Redis client
+  - github.com/alicebob/miniredis/v2 v2.35.0 - In-memory Redis for testing
+
+**Pending (Next Steps per HIGH_LEVEL_IMPLEMENTATION_PLAN.md lines 152-260):**
+- ⏳ Step 2: Create Service Layer without Redis (cart-service/internal/service/cart_service.go)
+  - CartService struct with repository dependency
+  - Passthrough methods to repository (GetCart, AddItem, UpdateQuantity, RemoveItem, ClearCart)
+  - Unit tests with mocked repository
+- ⏳ Step 3: Refactor gRPC Handler to use Service Layer
+  - Update handlers to call service instead of repository directly
+  - Update handler tests to mock service layer
+  - Update cmd/main.go wiring
+- ⏳ Step 5: Integrate Redis into Service Layer
+  - Add cache field to CartService
+  - Implement cache-aside pattern with singleflight for GetCart
+  - Implement write-through invalidation for mutating operations
+  - Graceful degradation on cache failures
+- ⏳ Step 6: Add Redis configuration management
+  - REDIS_ADDR, REDIS_PASSWORD environment variables
+  - Wire Redis client in cmd/main.go
+- ⏳ Step 7: Integration testing with real Redis
 - ⏳ Kafka consumer for checkout events
 - ⏳ Production hardening
   - Structured logging
@@ -195,6 +233,10 @@ cart-service/
 ├── internal/
 │   ├── domain/
 │   │   └── cart.go                      ✅ Cart and CartItem entities
+│   ├── cache/
+│   │   ├── cache.go                     ✅ CartCache interface
+│   │   ├── redis.go                     ✅ Redis implementation with TTL+jitter
+│   │   └── redis_test.go                ✅ Unit tests with miniredis (8/8 passing)
 │   ├── grpc/
 │   │   ├── handler.go                   ✅ Complete gRPC service with all 5 endpoints
 │   │   └── handler_test.go              ✅ Comprehensive unit tests (10 functions, 16 cases)
@@ -408,9 +450,11 @@ api-gateway/
   - Docker container (mongo:7) in docker-compose.dev.yml
   - MongoDB driver: go.mongodb.org/mongo-driver v1.17.6
   - Repository implementation with indexes and TTL
-- **Redis:** ✅ Configured in Docker Compose
+- **Redis:** 🔄 Partially Integrated
   - Docker container (redis:7-alpine) in docker-compose.dev.yml
-  - Not yet integrated in code
+  - Cart Service cache layer complete (cache interface + Redis implementation)
+  - Unit tests with miniredis v2.35.0 (8/8 passing)
+  - Service layer integration pending
 - **PostgreSQL:** ❌ Not configured
 
 ### Communication
@@ -429,8 +473,10 @@ api-gateway/
 
 **Cart Service:**
 - ✅ `go.mongodb.org/mongo-driver` v1.17.6 - MongoDB driver
+- ✅ `github.com/redis/go-redis/v9` - Redis client
 - ✅ `github.com/testcontainers/testcontainers-go` v0.40.0 - Integration testing with containers
 - ✅ `github.com/testcontainers/testcontainers-go/modules/mongodb` v0.40.0 - MongoDB testcontainer module
+- ✅ `github.com/alicebob/miniredis/v2` v2.35.0 - In-memory Redis for testing
 - ✅ `github.com/stretchr/testify` v1.11.1 - Testing assertions
 - ✅ `google.golang.org/grpc` v1.78.0 - gRPC framework (inherited)
 - ✅ `google.golang.org/protobuf` v1.36.11 - Protocol Buffers (inherited)
@@ -520,6 +566,12 @@ api-gateway/
   - Full CRUD operation tests
   - Context cancellation tests
   - Edge case coverage (not found, duplicate items, etc.)
+- ✅ Cache layer unit tests - COMPLETE (cart-service/internal/cache/redis_test.go)
+  - **8 test cases using miniredis (in-memory Redis)**
+  - TestGet_Success, TestGet_CacheMiss, TestGet_InvalidJSON
+  - TestSet_Success, TestSet_WithTTL (validates 15-20 min jitter)
+  - TestDelete_Success, TestDelete_NonExistentKey, TestCacheKey_Format
+  - **All tests passing (8/8)**
 - ✅ gRPC handler unit tests - COMPLETE (cart-service/internal/grpc/handler_test.go)
   - **10 top-level test functions, 16 total test cases (including subtests)**
   - Mock implementations for Repository and ProductServiceClient
@@ -605,7 +657,7 @@ grpcurl -plaintext localhost:8084 product.ProductService/GetProducts
 ### Cart Service
 **Build:** ✅ Compiles successfully
 **Run:** ✅ gRPC server running on port 50052 with all 5 endpoints (AddItem, GetCart, UpdateQuantity, RemoveItem, ClearCart)
-**Test:** ✅ Repository integration tests passing (requires Docker), gRPC handler unit tests passing (10/10 functions, 16/16 cases)
+**Test:** ✅ Repository integration tests passing (requires Docker), Cache layer unit tests passing (8/8 cases), gRPC handler unit tests passing (10/10 functions, 16/16 cases)
 
 **How to Run:**
 ```bash
@@ -625,6 +677,11 @@ go run cmd/main.go
 # Run repository integration tests (requires Docker)
 cd cart-service
 go test ./internal/repository/ -v
+
+# Run cache layer unit tests (using miniredis, no Docker needed)
+cd cart-service
+go test ./internal/cache/ -v
+# Output: 8/8 test cases passing
 
 # Run gRPC handler unit tests
 cd cart-service
@@ -725,9 +782,9 @@ curl http://localhost:8080/health
 - ✅ Cart Service Domain Layer: 100%
 - ✅ Cart Service Repository Layer: 100%
 - ✅ **Cart Service gRPC Layer: 100% (All 5 endpoints complete with full unit test coverage)**
-- ✅ **Cart Service Tests: 100% (Repository integration tests done, gRPC handler unit tests complete - 10 functions, 16 cases)**
+- ✅ **Cart Service Tests: 100% (Repository integration tests done, gRPC handler unit tests complete - 10 functions, 16 cases, Cache layer tests - 8 tests)**
 - ✅ Cart Service Production Readiness: 60% (env vars, graceful shutdown done)
-- ❌ Cart Service Redis Integration: 0%
+- 🔄 **Cart Service Redis Integration: 30% (Step 1/7 complete - Cache layer with tests done, service layer integration pending)**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
 - ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting pending)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
@@ -787,6 +844,12 @@ curl http://localhost:8080/health
   - All 5 API Gateway REST endpoints tested with running services
   - Verified MongoDB persistence for all operations
   - Confirmed proper error handling and validation across all endpoints
+- ✅ **Redis Cache Layer Implementation - Step 1/7 Complete** (cart-service/internal/cache/)
+  - Created CartCache interface (cache.go) with Get/Set/Delete methods
+  - Implemented RedisCache (redis.go) with TTL+jitter (15-20 min) using github.com/redis/go-redis/v9
+  - Comprehensive unit tests (redis_test.go) with 8 test cases using miniredis v2.35.0
+  - All tests passing (8/8): cache hit/miss, TTL verification, delete operations, invalid JSON handling
+  - Next: Create service layer to integrate Redis with repository
 
 **Session 2 - GetCart Implementation (Commit: fcbe621):**
 - ✅ Implemented Cart Service GetCart endpoint (cart-service/internal/grpc/handler.go)
