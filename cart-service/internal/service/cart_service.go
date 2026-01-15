@@ -3,7 +3,8 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
+	"time"
 
 	"github.com/fjod/go_cart/cart-service/internal/cache"
 	"github.com/fjod/go_cart/cart-service/internal/domain"
@@ -34,10 +35,18 @@ func (s *CartService) GetCart(ctx context.Context, userID string) (*domain.Cart,
 		}
 
 		if !errors.Is(err, cache.ErrCacheMiss) {
-			_ = fmt.Errorf("cache get error: %w \n", err) // log cache error but continue
+			log.Printf("cache get error: %v \n", err) // log cache error but continue
 		}
 
 		cart, errGet := s.repo.GetCart(ctx, userID)
+		if errGet != nil && errors.Is(errGet, repository.ErrCartNotFound) { // not found cart return empty cart
+			return &domain.Cart{
+				UserID:    userID,
+				Items:     nil,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}, nil
+		}
 		if errGet != nil {
 			return nil, errGet // err from repo is not cache miss, return it
 		}
@@ -46,7 +55,7 @@ func (s *CartService) GetCart(ctx context.Context, userID string) (*domain.Cart,
 		go func() {
 			errSet := s.cache.Set(context.Background(), userID, cart)
 			if errSet != nil {
-				_ = fmt.Errorf("cache set error: %w \n", errSet)
+				log.Printf("cache set error: %v \n", errSet)
 			}
 		}()
 
@@ -63,7 +72,7 @@ func (s *CartService) GetCart(ctx context.Context, userID string) (*domain.Cart,
 func (s *CartService) AddItem(ctx context.Context, userID string, item domain.CartItem) error {
 	errAdd := s.repo.AddItem(ctx, userID, item)
 	if errAdd != nil {
-		fmt.Printf("repo add item error: %v \n", errAdd)
+		log.Printf("repo add item error: %v \n", errAdd)
 		return errAdd
 	}
 
@@ -74,7 +83,7 @@ func (s *CartService) AddItem(ctx context.Context, userID string, item domain.Ca
 func (s *CartService) UpdateQuantity(ctx context.Context, userID string, productID int64, quantity int) error {
 	errUpdate := s.repo.UpdateItemQuantity(ctx, userID, productID, quantity)
 	if errUpdate != nil {
-		fmt.Printf("repo update item quantity error: %v \n", errUpdate)
+		log.Printf("repo update item quantity error: %v \n", errUpdate)
 		return errUpdate
 	}
 
@@ -85,7 +94,7 @@ func (s *CartService) UpdateQuantity(ctx context.Context, userID string, product
 func (s *CartService) RemoveItem(ctx context.Context, userID string, productID int64) error {
 	errRemove := s.repo.RemoveItem(ctx, userID, productID)
 	if errRemove != nil {
-		fmt.Printf("repo remove item error: %v \n", errRemove)
+		log.Printf("repo remove item error: %v \n", errRemove)
 		return errRemove
 	}
 
@@ -96,7 +105,7 @@ func (s *CartService) RemoveItem(ctx context.Context, userID string, productID i
 func (s *CartService) ClearCart(ctx context.Context, userID string) error {
 	errDelete := s.repo.DeleteCart(ctx, userID)
 	if errDelete != nil {
-		fmt.Printf("repo delete cart error: %v \n", errDelete)
+		log.Printf("repo delete cart error: %v \n", errDelete)
 		return errDelete
 	}
 
@@ -105,8 +114,10 @@ func (s *CartService) ClearCart(ctx context.Context, userID string) error {
 }
 
 func invalidateCache(s *CartService, userID string) {
-	errInvalidate := s.cache.Delete(context.Background(), userID)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	errInvalidate := s.cache.Delete(ctx, userID)
 	if errInvalidate != nil {
-		fmt.Printf("cache invalidate error: %v \n", errInvalidate)
+		log.Printf("cache invalidate error: %v \n", errInvalidate)
 	}
 }

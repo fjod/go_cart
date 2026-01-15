@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 14, 2026
+**Last Updated:** January 15, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -103,9 +103,9 @@ product-service/
 
 ---
 
-#### Cart Service ✅ Core gRPC Layer Complete
+#### Cart Service ✅ Redis Integration Complete
 
-**Status:** All 5 gRPC endpoints implemented with comprehensive unit test coverage, Redis integration pending
+**Status:** All 5 gRPC endpoints with Redis caching layer fully integrated and tested
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/cart-service`)
@@ -179,49 +179,57 @@ product-service/
   - Windows batch script for regenerating protobuf code
   - Generates both .pb.go and _grpc.pb.go files
 
-**Redis Caching Layer - Step 1/7 Complete:**
-- ✅ **Cache interface and Redis implementation** (cart-service/internal/cache/)
+**Redis Caching Layer - ✅ COMPLETE (Steps 1-6 of 7):**
+- ✅ **Step 1: Cache interface and Redis implementation** (cart-service/internal/cache/)
   - cache.go - CartCache interface with Get/Set/Delete methods and ErrCacheMiss sentinel
   - redis.go - RedisCache implementation using github.com/redis/go-redis/v9
   - Key format: `cart:{userID}`
   - Base TTL: 15 minutes + random jitter (0-5 minutes) to prevent thundering herd
   - JSON serialization for cart data
-- ✅ **Comprehensive unit tests** (cart-service/internal/cache/redis_test.go)
+- ✅ **Cache unit tests** (cart-service/internal/cache/redis_test.go)
   - 8 test cases using miniredis (in-memory Redis for testing)
-  - TestGet_Success - validates cache retrieval
-  - TestGet_CacheMiss - validates ErrCacheMiss handling
-  - TestGet_InvalidJSON - validates corrupted data error handling
-  - TestSet_Success - validates cache storage
-  - TestSet_WithTTL - validates TTL with jitter (15-20 min range)
-  - TestDelete_Success - validates cache invalidation
-  - TestDelete_NonExistentKey - validates no-error on missing keys
-  - TestCacheKey_Format - validates key format
   - **All tests passing (8/8)**
+- ✅ **Step 2-3: Service Layer created** (cart-service/internal/service/cart_service.go)
+  - CartService struct with repository + cache dependencies
+  - All 5 methods implemented: GetCart, AddItem, UpdateQuantity, RemoveItem, ClearCart
+  - gRPC handlers refactored to use service layer instead of repository directly
+- ✅ **Step 5: Redis integrated into Service Layer**
+  - Cache-aside pattern with singleflight for GetCart (prevents cache stampede)
+  - Write-through invalidation on all mutating operations (async goroutines)
+  - Graceful degradation: cache errors logged but don't fail operations
+  - Empty cart handling: returns empty cart instead of error for new users
+- ✅ **Step 6: Redis configuration in cmd/main.go**
+  - REDIS_ADDR environment variable (default: localhost:6379)
+  - REDIS_PASSWORD environment variable (default: empty)
+  - Redis client wired into service layer
+  - Redis ping verification on startup with logging
+- ✅ **Service layer unit tests** (cart-service/internal/service/cart_service_test.go)
+  - **12 test functions covering all 5 methods:**
+    * TestGetCart_Success - cache miss → repo fetch → cache populated
+    * TestGetCart_RepoError - database error propagation
+    * TestGetCart_CacheHit - returns from cache without hitting repo
+    * TestGetCart_CartNotFound_ReturnsEmptyCart - empty cart for new users
+    * TestAddItem_Success - adds item and invalidates cache
+    * TestAddItem_RepoError - database error propagation
+    * TestUpdateQuantity_Success - updates quantity and invalidates cache
+    * TestUpdateQuantity_RepoError - database error propagation
+    * TestRemoveItem_Success - removes item and invalidates cache
+    * TestRemoveItem_RepoError - database error propagation
+    * TestClearCart_Success - clears cart and invalidates cache
+    * TestClearCart_RepoError - database error propagation
+  - Mock implementations for repository and cache with mutex protection
+  - Async cache invalidation verified with require.Eventually()
+  - **All tests passing (12/12)**
 - ✅ **Dependencies installed**
   - github.com/redis/go-redis/v9 - Redis client
   - github.com/alicebob/miniredis/v2 v2.35.0 - In-memory Redis for testing
+  - golang.org/x/sync/singleflight - Cache stampede prevention
 
-**Pending (Next Steps per HIGH_LEVEL_IMPLEMENTATION_PLAN.md lines 152-260):**
-- ⏳ Step 2: Create Service Layer without Redis (cart-service/internal/service/cart_service.go)
-  - CartService struct with repository dependency
-  - Passthrough methods to repository (GetCart, AddItem, UpdateQuantity, RemoveItem, ClearCart)
-  - Unit tests with mocked repository
-- ⏳ Step 3: Refactor gRPC Handler to use Service Layer
-  - Update handlers to call service instead of repository directly
-  - Update handler tests to mock service layer
-  - Update cmd/main.go wiring
-- ⏳ Step 5: Integrate Redis into Service Layer
-  - Add cache field to CartService
-  - Implement cache-aside pattern with singleflight for GetCart
-  - Implement write-through invalidation for mutating operations
-  - Graceful degradation on cache failures
-- ⏳ Step 6: Add Redis configuration management
-  - REDIS_ADDR, REDIS_PASSWORD environment variables
-  - Wire Redis client in cmd/main.go
-- ⏳ Step 7: Integration testing with real Redis
+**Pending:**
+- ⏳ Step 7: Integration testing with real Redis (testcontainers)
 - ⏳ Kafka consumer for checkout events
 - ⏳ Production hardening
-  - Structured logging
+  - Structured logging (replace log.Printf with slog or zap)
   - Request validation improvements
   - Error handling enhancements
 
@@ -229,7 +237,7 @@ product-service/
 ```
 cart-service/
 ├── cmd/
-│   └── main.go                          ✅ gRPC server implementation
+│   └── main.go                          ✅ gRPC server with Redis + service layer wiring
 ├── internal/
 │   ├── domain/
 │   │   └── cart.go                      ✅ Cart and CartItem entities
@@ -237,9 +245,12 @@ cart-service/
 │   │   ├── cache.go                     ✅ CartCache interface
 │   │   ├── redis.go                     ✅ Redis implementation with TTL+jitter
 │   │   └── redis_test.go                ✅ Unit tests with miniredis (8/8 passing)
+│   ├── service/
+│   │   ├── cart_service.go              ✅ Service layer with cache-aside pattern
+│   │   └── cart_service_test.go         ✅ Unit tests (12/12 passing)
 │   ├── grpc/
-│   │   ├── handler.go                   ✅ Complete gRPC service with all 5 endpoints
-│   │   └── handler_test.go              ✅ Comprehensive unit tests (10 functions, 16 cases)
+│   │   ├── handler.go                   ✅ gRPC handlers using service layer
+│   │   └── handler_test.go              ✅ Unit tests (10 functions, 16 cases)
 │   └── repository/
 │       ├── repository.go                ✅ Repository interface
 │       ├── mongo_repository.go          ✅ MongoDB implementation
@@ -493,17 +504,17 @@ api-gateway/
 
 ### Immediate Priorities
 
-1. **✅ Complete Cart Service gRPC Layer - COMPLETED**
+1. **✅ Complete Cart Service with Redis Integration - COMPLETED**
    - ✅ Define protobuf messages and service (DONE)
-   - ✅ Implement gRPC handler for AddItem (DONE)
-   - ✅ Implement gRPC handler for GetCart (DONE)
-   - ✅ Implement UpdateQuantity endpoint (DONE)
-   - ✅ Implement RemoveItem endpoint (DONE)
-   - ✅ Implement ClearCart endpoint (DONE)
+   - ✅ Implement all 5 gRPC handlers (DONE)
    - ✅ Set up gRPC server (DONE)
-   - ✅ Add comprehensive unit tests (DONE - 10 functions, 16 test cases, all passing)
-   - ⏳ Integrate Redis caching layer (NEXT PRIORITY)
-   - ⏳ Add integration tests with real MongoDB
+   - ✅ Add comprehensive unit tests (DONE - 10 functions, 16 test cases)
+   - ✅ Create service layer with cache-aside pattern (DONE)
+   - ✅ Integrate Redis caching with singleflight (DONE)
+   - ✅ Add service layer unit tests (DONE - 12 tests)
+   - ✅ Wire Redis into main.go (DONE)
+   - ✅ Fix empty cart handling (DONE)
+   - ⏳ Add integration tests with real Redis (testcontainers)
 
 2. **✅ Complete API Gateway Cart Endpoints - COMPLETED**
    - ✅ Set up HTTP server with chi router (DONE)
@@ -572,22 +583,26 @@ api-gateway/
   - TestSet_Success, TestSet_WithTTL (validates 15-20 min jitter)
   - TestDelete_Success, TestDelete_NonExistentKey, TestCacheKey_Format
   - **All tests passing (8/8)**
+- ✅ Service layer unit tests - COMPLETE (cart-service/internal/service/cart_service_test.go)
+  - **12 test functions covering all 5 service methods**
+  - Mock implementations for Repository and Cache with mutex protection
+  - Comprehensive coverage:
+    * TestGetCart_Success - cache miss → repo fetch → cache populated
+    * TestGetCart_RepoError - database error propagation
+    * TestGetCart_CacheHit - returns from cache without hitting repo
+    * TestGetCart_CartNotFound_ReturnsEmptyCart - empty cart for new users
+    * TestAddItem_Success/RepoError - item addition and error handling
+    * TestUpdateQuantity_Success/RepoError - quantity update and error handling
+    * TestRemoveItem_Success/RepoError - item removal and error handling
+    * TestClearCart_Success/RepoError - cart clearing and error handling
+  - Async cache invalidation verified with require.Eventually()
+  - **All tests passing (12/12)**
 - ✅ gRPC handler unit tests - COMPLETE (cart-service/internal/grpc/handler_test.go)
   - **10 top-level test functions, 16 total test cases (including subtests)**
-  - Mock implementations for Repository and ProductServiceClient
-  - Comprehensive coverage for all 5 endpoints:
-    * TestGetCart_Success - validates cart retrieval with multiple items
-    * TestAddItem_Success - validates item addition
-    * TestAddItem_NotFound - validates product not found error handling
-    * TestAddItem_NoStock - validates out-of-stock error handling
-    * TestUpdateQuantity_Success - validates quantity updates (NEW)
-    * TestUpdateQuantity_InvalidInput - validates validation with 4 subtests (NEW)
-    * TestRemoveItem_Success - validates item removal (NEW)
-    * TestRemoveItem_InvalidInput - validates validation with 2 subtests (NEW)
-    * TestClearCart_Success - validates cart clearing (NEW)
-    * TestClearCart_InvalidInput - validates user_id validation (NEW)
+  - Mock implementations for Service and ProductServiceClient
+  - Comprehensive coverage for all 5 endpoints
   - **All tests passing (10/10 functions, 16/16 cases)**
-- ⏳ Integration tests pending
+- ⏳ Integration tests with real Redis pending (Step 7)
 
 ### API Gateway
 - ✅ HTTP handler unit tests - COMPLETE (api-gateway/internal/http/cart_handler_test.go)
@@ -770,7 +785,7 @@ curl http://localhost:8080/health
 
 ## Progress Summary
 
-**Overall Completion:** ~55%
+**Overall Completion:** ~60%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -781,10 +796,11 @@ curl http://localhost:8080/health
 - ✅ Cart Service Database Layer: 100%
 - ✅ Cart Service Domain Layer: 100%
 - ✅ Cart Service Repository Layer: 100%
-- ✅ **Cart Service gRPC Layer: 100% (All 5 endpoints complete with full unit test coverage)**
-- ✅ **Cart Service Tests: 100% (Repository integration tests done, gRPC handler unit tests complete - 10 functions, 16 cases, Cache layer tests - 8 tests)**
-- ✅ Cart Service Production Readiness: 60% (env vars, graceful shutdown done)
-- 🔄 **Cart Service Redis Integration: 30% (Step 1/7 complete - Cache layer with tests done, service layer integration pending)**
+- ✅ **Cart Service Service Layer: 100% (cache-aside pattern, singleflight, graceful degradation)**
+- ✅ **Cart Service gRPC Layer: 100% (All 5 endpoints using service layer)**
+- ✅ **Cart Service Tests: 100% (Repository 8 tests, Cache 8 tests, Service 12 tests, Handler 16 tests = 44 total)**
+- ✅ Cart Service Production Readiness: 75% (env vars, graceful shutdown, Redis integration done)
+- ✅ **Cart Service Redis Integration: 85% (Steps 1-6/7 complete - Integration tests pending)**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
 - ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting pending)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
@@ -798,13 +814,45 @@ curl http://localhost:8080/health
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
-- **Cart Service ~90% complete (All 5 gRPC endpoints complete with full test coverage; Redis caching pending)**
-- **API Gateway ~65% complete (All 5 cart endpoints complete with comprehensive unit tests; Product Service integration and e2e tests pending)**
+- **Cart Service ~95% complete (All 5 gRPC endpoints with Redis caching, service layer, comprehensive tests)**
+- **API Gateway ~65% complete (All 5 cart endpoints complete; Product Service integration and e2e tests pending)**
 - Docker Infrastructure ~40% complete (MongoDB and Redis done)
 
-**Recent Progress (January 13, 2026):**
+**Recent Progress (January 15, 2026):**
 
-**Session 3 - Cart Service & API Gateway Completion (Current - Uncommitted):**
+**Session 4 - Redis Service Layer Integration (Current - Uncommitted):**
+- ✅ **Created Cart Service service layer** (cart-service/internal/service/cart_service.go)
+  - CartService struct with repository + cache + singleflight dependencies
+  - GetCart with cache-aside pattern and singleflight for stampede prevention
+  - AddItem, UpdateQuantity, RemoveItem, ClearCart with async cache invalidation
+  - Empty cart handling: returns empty cart for new users instead of error
+  - Graceful degradation: cache failures logged but don't fail operations
+  - 1-second timeout on cache invalidation goroutines
+- ✅ **Refactored gRPC handlers to use service layer** (cart-service/internal/grpc/handler.go)
+  - Changed dependency from repository to service layer
+  - All 5 handlers now call service methods instead of repository directly
+  - Updated handler tests with mock service layer dependencies
+- ✅ **Wired Redis into main.go** (cart-service/cmd/main.go)
+  - Redis client initialization with REDIS_ADDR and REDIS_PASSWORD env vars
+  - Redis ping verification on startup with "Redis ping succeeded" log
+  - Service layer wiring: repo → cache → service → handler
+- ✅ **Comprehensive service layer tests** (cart-service/internal/service/cart_service_test.go)
+  - 12 test functions covering all 5 service methods
+  - Tests for success paths, error paths, cache hits, and empty cart handling
+  - Mock repository and cache with mutex protection for thread safety
+  - Async cache invalidation verified with require.Eventually()
+  - **All tests passing (12/12)**
+- ✅ **Fixed empty cart issue**
+  - GET /api/v1/cart now returns empty cart `{"user_id":1,"cart":[]}` instead of error
+  - Proper handling of repository.ErrCartNotFound in service layer
+- ✅ **End-to-end verification with live services**
+  - All 5 REST endpoints tested via curl
+  - Redis caching working (cache population and invalidation verified)
+  - Empty cart behavior confirmed working
+
+**Previous Progress (January 13, 2026):**
+
+**Session 3 - Cart Service & API Gateway Completion:**
 - ✅ **Completed all 3 remaining Cart Service gRPC endpoints** (cart-service/internal/grpc/handler.go)
   - UpdateQuantity - Update item quantity with validation (quantity 1-99)
   - RemoveItem - Remove specific item from cart

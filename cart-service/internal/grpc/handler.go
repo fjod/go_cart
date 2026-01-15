@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/fjod/go_cart/cart-service/internal/domain"
-	db "github.com/fjod/go_cart/cart-service/internal/repository"
+	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"google.golang.org/grpc/codes"
@@ -17,13 +17,13 @@ const timeFormat string = "2006-01-02T15:04:05Z07:00"
 
 type CartServiceServer struct {
 	pb.UnimplementedCartServiceServer
-	repo          db.CartRepository
+	service       *s.CartService
 	productClient productpb.ProductServiceClient
 }
 
-func NewCartServiceServer(repo db.CartRepository, productClient productpb.ProductServiceClient) *CartServiceServer {
+func NewCartServiceServer(service *s.CartService, productClient productpb.ProductServiceClient) *CartServiceServer {
 	return &CartServiceServer{
-		repo:          repo,
+		service:       service,
 		productClient: productClient,
 	}
 }
@@ -57,7 +57,7 @@ func (s *CartServiceServer) GetCart(
 	}
 
 	userID := fmt.Sprintf("%d", req.UserId)
-	cart, err := s.repo.GetCart(ctx, userID)
+	cart, err := s.service.GetCart(ctx, userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
 	}
@@ -115,13 +115,13 @@ func (s *CartServiceServer) AddItem(
 	}
 
 	// Add item to cart via repository
-	err = s.repo.AddItem(ctx, userID, cartItem)
+	err = s.service.AddItem(ctx, userID, cartItem)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to add item to cart: %v", err)
 	}
 
 	// Get the updated cart
-	cart, err := s.repo.GetCart(ctx, userID)
+	cart, err := s.service.GetCart(ctx, userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
 	}
@@ -151,13 +151,13 @@ func (s *CartServiceServer) UpdateQuantity(
 	userID := fmt.Sprintf("%d", req.UserId)
 
 	// Update item quantity in repository
-	err := s.repo.UpdateItemQuantity(ctx, userID, req.ProductId, int(req.Quantity))
+	err := s.service.UpdateQuantity(ctx, userID, req.ProductId, int(req.Quantity))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to update item quantity: %v", err)
 	}
 
 	// Get the updated cart
-	cart, err := s.repo.GetCart(ctx, userID)
+	cart, err := s.service.GetCart(ctx, userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
 	}
@@ -184,13 +184,13 @@ func (s *CartServiceServer) RemoveItem(
 	userID := fmt.Sprintf("%d", req.UserId)
 
 	// Remove item from repository
-	err := s.repo.RemoveItem(ctx, userID, req.ProductId)
+	err := s.service.RemoveItem(ctx, userID, req.ProductId)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to remove item: %v", err)
 	}
 
 	// Get the updated cart
-	cart, err := s.repo.GetCart(ctx, userID)
+	cart, err := s.service.GetCart(ctx, userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get cart: %v", err)
 	}
@@ -214,7 +214,7 @@ func (s *CartServiceServer) ClearCart(
 	userID := fmt.Sprintf("%d", req.UserId)
 
 	// Delete cart from repository
-	err := s.repo.DeleteCart(ctx, userID)
+	err := s.service.ClearCart(ctx, userID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to clear cart: %v", err)
 	}

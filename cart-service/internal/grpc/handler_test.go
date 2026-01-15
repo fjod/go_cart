@@ -3,10 +3,13 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/fjod/go_cart/cart-service/internal/cache"
 	"github.com/fjod/go_cart/cart-service/internal/domain"
+	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/stretchr/testify/assert"
@@ -17,23 +20,30 @@ import (
 )
 
 type mockRepository struct {
+	m    sync.RWMutex
 	cart *domain.Cart
 	err  error
 }
 
-func (m mockRepository) GetCart(ctx context.Context, userID string) (*domain.Cart, error) {
+func (m *mockRepository) GetCart(context.Context, string) (*domain.Cart, error) {
+	m.m.RLock()
+	defer m.m.RUnlock()
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.cart, nil
 }
 
-func (m mockRepository) UpsertCart(ctx context.Context, cart *domain.Cart) error {
-	//TODO implement me
-	panic("implement me")
+func (m *mockRepository) UpsertCart(_ context.Context, c *domain.Cart) error {
+	m.m.Lock()
+	defer m.m.Unlock()
+	m.cart = c
+	return m.err
 }
 
-func (m mockRepository) AddItem(ctx context.Context, userID string, item domain.CartItem) error {
+func (m *mockRepository) AddItem(_ context.Context, _ string, item domain.CartItem) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -41,7 +51,9 @@ func (m mockRepository) AddItem(ctx context.Context, userID string, item domain.
 	return nil
 }
 
-func (m *mockRepository) UpdateItemQuantity(ctx context.Context, userID string, productID int64, quantity int) error {
+func (m *mockRepository) UpdateItemQuantity(_ context.Context, _ string, productID int64, quantity int) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -55,7 +67,9 @@ func (m *mockRepository) UpdateItemQuantity(ctx context.Context, userID string, 
 	return fmt.Errorf("item not found")
 }
 
-func (m *mockRepository) RemoveItem(ctx context.Context, userID string, productID int64) error {
+func (m *mockRepository) RemoveItem(_ context.Context, _ string, productID int64) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -69,7 +83,9 @@ func (m *mockRepository) RemoveItem(ctx context.Context, userID string, productI
 	return fmt.Errorf("item not found")
 }
 
-func (m *mockRepository) DeleteCart(ctx context.Context, userID string) error {
+func (m *mockRepository) DeleteCart(_ context.Context, _ string) error {
+	m.m.Lock()
+	defer m.m.Unlock()
 	if m.err != nil {
 		return m.err
 	}
@@ -78,40 +94,79 @@ func (m *mockRepository) DeleteCart(ctx context.Context, userID string) error {
 	return nil
 }
 
+type mockCache struct {
+	m    sync.RWMutex
+	cart *domain.Cart
+	err  error
+}
+
+func (m *mockCache) Get(context.Context, string) (*domain.Cart, error) {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.cart == nil {
+		return nil, cache.ErrCacheMiss
+	}
+	return m.cart, nil
+}
+
+func (m *mockCache) Set(_ context.Context, _ string, cart *domain.Cart) error {
+	m.m.Lock()
+	defer m.m.Unlock()
+	m.cart = cart
+	return m.err
+}
+
+func (m *mockCache) Delete(context.Context, string) error {
+	m.m.Lock()
+	defer m.m.Unlock()
+	m.cart = nil
+	return m.err
+}
+
 // mockProductServiceClient implements productpb.ProductServiceClient
 type mockProductServiceClient struct {
 	getProductResp *productpb.GetProductResponse
 	getProductErr  error
 }
 
-func (m *mockProductServiceClient) GetProduct(ctx context.Context, in *productpb.GetProductRequest, opts ...grpc.CallOption) (*productpb.GetProductResponse, error) {
+func (m *mockProductServiceClient) GetProduct(context.Context, *productpb.GetProductRequest, ...grpc.CallOption) (*productpb.GetProductResponse, error) {
 	if m.getProductErr != nil {
 		return nil, m.getProductErr
 	}
 	return m.getProductResp, nil
 }
 
-func (m *mockProductServiceClient) GetProducts(ctx context.Context, in *productpb.GetProductsRequest, opts ...grpc.CallOption) (*productpb.GetProductsResponse, error) {
+func (m *mockProductServiceClient) GetProducts(context.Context, *productpb.GetProductsRequest, ...grpc.CallOption) (*productpb.GetProductsResponse, error) {
 	// Not needed for current tests
 	return nil, nil
 }
 
-func TestGetCart_Success(t *testing.T) {
+func createCacheAndRepo(c *domain.Cart) *s.CartService {
 	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items: []domain.CartItem{
-				{ProductID: 1, Quantity: 5},
-				{ProductID: 2, Quantity: 10},
-			},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+		cart: c,
 	}
+	mc := &mockCache{
+		cart: c,
+	}
+	return s.NewCartService(mockRepo, mc)
+}
 
+func TestGetCart_Success(t *testing.T) {
+	cart := &domain.Cart{
+		Items: []domain.CartItem{
+			{ProductID: 1, Quantity: 5},
+			{ProductID: 2, Quantity: 10},
+		},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	service := createCacheAndRepo(cart)
 	mockProductClient := &mockProductServiceClient{}
-
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 	ret, err := server.GetCart(context.Background(), &pb.GetCartRequest{
 		UserId: 123,
 	})
@@ -128,14 +183,14 @@ func TestGetCart_Success(t *testing.T) {
 }
 
 func TestAddItem_Success(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+
+	service := createCacheAndRepo(cart)
 
 	// Create mock for ProductServiceClient that returns a valid product
 	mockProductClient := &mockProductServiceClient{
@@ -149,7 +204,7 @@ func TestAddItem_Success(t *testing.T) {
 		},
 	}
 
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -169,14 +224,13 @@ func TestAddItem_Success(t *testing.T) {
 }
 
 func TestAddItem_NotFound(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	// Create mock for ProductServiceClient that returns a valid product
 	mockProductClient := &mockProductServiceClient{
@@ -186,7 +240,7 @@ func TestAddItem_NotFound(t *testing.T) {
 		getProductErr: status.Error(codes.NotFound, "product not found"),
 	}
 
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -198,14 +252,13 @@ func TestAddItem_NotFound(t *testing.T) {
 }
 
 func TestAddItem_NoStock(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	// Create mock for ProductServiceClient that returns a valid product
 	mockProductClient := &mockProductServiceClient{
@@ -219,7 +272,7 @@ func TestAddItem_NoStock(t *testing.T) {
 		},
 	}
 
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -231,20 +284,19 @@ func TestAddItem_NoStock(t *testing.T) {
 }
 
 func TestUpdateQuantity_Success(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items: []domain.CartItem{
-				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
-				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
-			},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+	cart := &domain.Cart{
+		Items: []domain.CartItem{
+			{ProductID: 1, Quantity: 5},
+			{ProductID: 2, Quantity: 10},
 		},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	ret, err := server.UpdateQuantity(context.Background(), &pb.UpdateQuantityRequest{
 		UserId:    123,
@@ -261,17 +313,16 @@ func TestUpdateQuantity_Success(t *testing.T) {
 }
 
 func TestUpdateQuantity_InvalidInput(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	tests := []struct {
 		name     string
@@ -310,20 +361,19 @@ func TestUpdateQuantity_InvalidInput(t *testing.T) {
 }
 
 func TestRemoveItem_Success(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items: []domain.CartItem{
-				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
-				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
-			},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+	cart := &domain.Cart{
+		Items: []domain.CartItem{
+			{ProductID: 1, Quantity: 5},
+			{ProductID: 2, Quantity: 10},
 		},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	ret, err := server.RemoveItem(context.Background(), &pb.RemoveItemRequest{
 		UserId:    123,
@@ -340,17 +390,16 @@ func TestRemoveItem_Success(t *testing.T) {
 }
 
 func TestRemoveItem_InvalidInput(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	tests := []struct {
 		name     string
@@ -379,20 +428,19 @@ func TestRemoveItem_InvalidInput(t *testing.T) {
 }
 
 func TestClearCart_Success(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items: []domain.CartItem{
-				{ProductID: 1, Quantity: 5, AddedAt: time.Now()},
-				{ProductID: 2, Quantity: 10, AddedAt: time.Now()},
-			},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+	cart := &domain.Cart{
+		Items: []domain.CartItem{
+			{ProductID: 1, Quantity: 5},
+			{ProductID: 2, Quantity: 10},
 		},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
 		UserId: 123,
@@ -406,17 +454,16 @@ func TestClearCart_Success(t *testing.T) {
 }
 
 func TestClearCart_InvalidInput(t *testing.T) {
-	mockRepo := &mockRepository{
-		cart: &domain.Cart{
-			Items:     []domain.CartItem{},
-			UserID:    "123",
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		},
+	cart := &domain.Cart{
+		Items:     []domain.CartItem{{ProductID: 1, Quantity: 5}},
+		UserID:    "123",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
+	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(mockRepo, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient)
 
 	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
 		UserId: 0,

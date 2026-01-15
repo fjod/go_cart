@@ -9,10 +9,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	c "github.com/fjod/go_cart/cart-service/internal/cache"
 	cartgrpc "github.com/fjod/go_cart/cart-service/internal/grpc"
 	"github.com/fjod/go_cart/cart-service/internal/repository"
+	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
+	"github.com/redis/go-redis/v9"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -49,8 +52,20 @@ func main() {
 	productClient := productpb.NewProductServiceClient(productConn)
 	log.Printf("Connected to product service at %s", productServiceAddr)
 
-	// Create cart service server with both repository and product client
-	cartServer := cartgrpc.NewCartServiceServer(repo, productClient)
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		Password: getEnv("REDIS_PASSWORD", ""),
+		DB:       0,
+	})
+	defer redisClient.Close()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Fatal("Redis connection failed:", err)
+	}
+	log.Printf("Redis ping succeeded")
+
+	cache := c.NewRedisCache(redisClient)
+	service := s.NewCartService(repo, cache)
+	cartServer := cartgrpc.NewCartServiceServer(service, productClient)
 
 	// Set up gRPC server for cart service
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cartServicePort))
