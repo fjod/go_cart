@@ -3,7 +3,6 @@ package grpc
 import (
 	"context"
 	"testing"
-	"time"
 
 	c "github.com/fjod/go_cart/cart-service/internal/cache"
 	r "github.com/fjod/go_cart/cart-service/internal/repository"
@@ -182,11 +181,6 @@ func TestUpdateQuantity_Integration(t *testing.T) {
 		Quantity:  5,
 	})
 	require.NoError(t, err)
-
-	// Small delay to let async cache operations complete
-	// This works around a race condition between async cache invalidation
-	// and subsequent GetCart calls (TODO: fix by making cache invalidation synchronous)
-	time.Sleep(50 * time.Millisecond)
 
 	// Update the quantity
 	ret, err := server.UpdateQuantity(context.Background(), &pb.UpdateQuantityRequest{

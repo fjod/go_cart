@@ -76,7 +76,7 @@ func (s *CartService) AddItem(ctx context.Context, userID string, item domain.Ca
 		return errAdd
 	}
 
-	go invalidateCache(s, userID)
+	invalidateCache(s, userID)
 	return nil
 }
 
@@ -87,7 +87,7 @@ func (s *CartService) UpdateQuantity(ctx context.Context, userID string, product
 		return errUpdate
 	}
 
-	go invalidateCache(s, userID)
+	invalidateCache(s, userID)
 	return nil
 }
 
@@ -98,7 +98,7 @@ func (s *CartService) RemoveItem(ctx context.Context, userID string, productID i
 		return errRemove
 	}
 
-	go invalidateCache(s, userID)
+	invalidateCache(s, userID)
 	return nil
 }
 
@@ -109,7 +109,7 @@ func (s *CartService) ClearCart(ctx context.Context, userID string) error {
 		return errDelete
 	}
 
-	go invalidateCache(s, userID)
+	invalidateCache(s, userID)
 	return nil
 }
 
