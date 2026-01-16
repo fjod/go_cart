@@ -12,6 +12,7 @@ import (
 	"time"
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"google.golang.org/grpc"
@@ -25,6 +26,7 @@ import (
 type Config struct {
 	HTTPPort           string
 	CartServiceAddr    string
+	ProductServiceAddr string
 	RequestTimeout     time.Duration
 	ShutdownTimeout    time.Duration
 	MaxRequestBodySize int64
@@ -34,6 +36,7 @@ func loadConfig() *Config {
 	return &Config{
 		HTTPPort:           getEnv("HTTP_PORT", "8080"),
 		CartServiceAddr:    getEnv("CART_SERVICE_ADDR", "localhost:50052"),
+		ProductServiceAddr: getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051"),
 		RequestTimeout:     30 * time.Second,
 		ShutdownTimeout:    10 * time.Second,
 		MaxRequestBodySize: 1 << 20, // 1MB
@@ -61,8 +64,19 @@ func main() {
 	defer cartServiceConn.Close()
 
 	cartClient := cartpb.NewCartServiceClient(cartServiceConn)
-
 	cartHandler := h.NewCartHandler(cartClient, cfg.RequestTimeout)
+
+	productServiceConn, err := grpc.NewClient(
+		cfg.ProductServiceAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalf("Failed to connect to product service: %v", err)
+	}
+	defer cartServiceConn.Close()
+
+	productClient := productpb.NewProductServiceClient(productServiceConn)
+	productHandler := h.NewProductHandler(productClient, cfg.RequestTimeout)
 
 	// Setup router
 	r := chi.NewRouter()
@@ -89,6 +103,10 @@ func main() {
 			r.Put("/items/{product_id}", cartHandler.UpdateQuantity)
 			r.Delete("/items/{product_id}", cartHandler.RemoveItem)
 			r.Delete("/", cartHandler.ClearCart)
+		})
+
+		r.Route("/products", func(r chi.Router) {
+			r.Get("/", productHandler.Get)
 		})
 	})
 

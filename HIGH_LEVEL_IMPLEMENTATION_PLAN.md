@@ -55,6 +55,9 @@ POST   /api/v1/cart/items              → Add item to cart
 GET    /api/v1/cart                    → Get user's cart
 PUT    /api/v1/cart/items/:id          → Update item quantity
 DELETE /api/v1/cart/items/:id          → Remove item from cart
+DELETE /api/v1/cart                    → Clear entire cart
+GET    /api/v1/products                → List all products
+GET    /api/v1/products/:id            → Get product details
 POST   /api/v1/checkout                → Initiate checkout process
 GET    /api/v1/orders                  → List user's orders
 GET    /api/v1/orders/:id              → Get order details
