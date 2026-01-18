@@ -4,4 +4,5 @@ use (
 	./product-service
 	./cart-service
 	./api-gateway
+	./inventory-service
 )

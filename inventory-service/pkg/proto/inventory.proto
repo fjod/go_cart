@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package inventory;
+
+option go_package = "github.com/fjod/go_cart/inventory-service/pkg/proto";
+
+// Stock information for a product
+message StockInfo {
+  int64 product_id = 1;
+  int32 available = 2;      // Available stock (total - reserved)
+  int32 reserved = 3;       // Currently reserved quantity
+}
+
+// Request to get stock levels for products
+message GetStockRequest {
+  repeated int64 product_ids = 1;
+}
+
+// Response with stock information
+message GetStockResponse {
+  repeated StockInfo stocks = 1;
+}
+
+// Item to reserve
+message ReservationItem {
+  int64 product_id = 1;
+  int32 quantity = 2;
+}
+
+// Request to create a reservation
+message ReserveRequest {
+  string checkout_id = 1;              // Unique checkout/order ID
+  repeated ReservationItem items = 2;
+}
+
+// Response after creating a reservation
+message ReserveResponse {
+  string reservation_id = 1;
+  string expires_at = 2;               // RFC3339 format
+}
+
+// Request to confirm a reservation (after payment success)
+message ConfirmRequest {
+  string reservation_id = 1;
+}
+
+// Response after confirming
+message ConfirmResponse {
+  bool success = 1;
+}
+
+// Request to release a reservation (on payment failure)
+message ReleaseRequest {
+  string reservation_id = 1;
+}
+
+// Response after releasing
+message ReleaseResponse {
+  bool success = 1;
+}
+
+// Inventory service definition
+service InventoryService {
+  // Get stock levels for specified products
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+
+  // Reserve stock during checkout (5-min TTL)
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+
+  // Confirm reservation after successful payment
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
+
+  // Release reservation on payment failure
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
