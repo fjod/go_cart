@@ -437,12 +437,109 @@ api-gateway/
 
 ---
 
-### Phase 2: Checkout Orchestration ❌ Not Started
+### Phase 2: Checkout Orchestration 🔄 In Progress
 
 **Services:**
 - ⏳ Checkout Service (saga orchestrator)
-- ⏳ Inventory Service (in-memory stub)
+- ✅ Inventory Service (in-memory stub) - **COMPLETED**
 - ⏳ Payment Service (mock stub)
+
+---
+
+#### Inventory Service ✅ Complete
+
+**Status:** Fully implemented in-memory stub service for stock management and reservations
+
+**Completed:**
+- ✅ Go module initialization (`github.com/fjod/go_cart/inventory-service`)
+- ✅ Added to Go workspace (go.work)
+- ✅ Domain models (inventory-service/internal/domain/inventory.go)
+  - ReservationStatus enum (Reserved, Confirmed, Released, Expired)
+  - Reservation struct with ID, CheckoutID, Items, Status, timestamps
+  - ReservationItem struct with ProductID and Quantity
+  - StockInfo struct with ProductID, Total, Reserved, and Available() method
+- ✅ Store interface and error definitions (inventory-service/internal/store/store.go)
+  - InventoryStore interface with GetStock, Reserve, Confirm, Release, SetStock, Close
+  - Sentinel errors: ErrProductNotFound, ErrInsufficientStock, ErrReservationNotFound, ErrReservationExpired, ErrInvalidStatus
+- ✅ In-memory store implementation (inventory-service/internal/store/memory_store.go)
+  - Thread-safe with sync.RWMutex
+  - Reserve with two-phase validation (validate all → reserve all for atomicity)
+  - Confirm permanently deducts stock after payment
+  - Release returns reserved stock on payment failure
+  - Background cleanup goroutine (30s interval) for expired reservations
+  - Graceful shutdown with sync.WaitGroup
+  - 5-minute reservation TTL with auto-expiration
+- ✅ Protobuf definitions (inventory-service/pkg/proto/inventory.proto)
+  - StockInfo, ReservationItem messages
+  - GetStock, Reserve, Confirm, Release RPCs
+  - Request/Response messages for all 4 methods
+- ✅ gRPC handler (inventory-service/internal/grpc/handler.go)
+  - Input validation for all endpoints
+  - Domain ↔ Proto conversion
+  - Error mapping to gRPC status codes (NotFound, FailedPrecondition, InvalidArgument, Internal)
+- ✅ Main entry point (inventory-service/cmd/main.go)
+  - gRPC server on port 50053 (configurable via INVENTORY_SERVICE_PORT)
+  - Initial stock seeded matching product-service (5 products: 100-500 units)
+  - gRPC reflection enabled for debugging
+  - Graceful shutdown handling
+- ✅ Comprehensive unit tests
+  - Store tests (inventory-service/internal/store/memory_store_test.go): 11 tests
+    * SetStock/GetStock, Reserve success/insufficient/not found
+    * Confirm success/not found/invalid status
+    * Release success/not found, concurrent reservations, expiration
+  - Handler tests (inventory-service/internal/grpc/handler_test.go): 12 tests
+    * GetStock, Reserve validation and errors, Confirm/Release success and errors
+  - **All 23 tests passing**
+- ✅ Added to test-all.ps1 script
+
+**Initial Stock (matches product-service seeds):**
+| Product ID | Name | Stock |
+|------------|------|-------|
+| 1 | Laptop | 100 |
+| 2 | Mouse | 500 |
+| 3 | Keyboard | 300 |
+| 4 | Monitor | 150 |
+| 5 | Headphones | 200 |
+
+**File Structure:**
+```
+inventory-service/
+├── cmd/
+│   └── main.go                          ✅ gRPC server with graceful shutdown
+├── internal/
+│   ├── domain/
+│   │   └── inventory.go                 ✅ Reservation, StockInfo entities
+│   ├── store/
+│   │   ├── store.go                     ✅ InventoryStore interface + errors
+│   │   ├── memory_store.go              ✅ Thread-safe in-memory implementation
+│   │   └── memory_store_test.go         ✅ Unit tests (11 tests)
+│   └── grpc/
+│       ├── handler.go                   ✅ gRPC service implementation
+│       └── handler_test.go              ✅ Unit tests (12 tests)
+├── pkg/
+│   └── proto/
+│       ├── inventory.proto              ✅ Service definition (4 RPCs)
+│       ├── inventory.pb.go              ✅ Generated code
+│       └── inventory_grpc.pb.go         ✅ Generated gRPC code
+├── genProto.bat                         ✅ Proto generation script
+└── go.mod                               ✅ Dependencies configured
+```
+
+**How to Run:**
+```bash
+go run ./inventory-service/cmd/main.go
+```
+
+**How to Test:**
+```bash
+# Unit tests
+go test -v ./inventory-service/...
+
+# gRPC endpoints with grpcurl
+grpcurl -plaintext localhost:50053 list
+grpcurl -plaintext -d '{"product_ids": [1, 2]}' localhost:50053 inventory.InventoryService/GetStock
+grpcurl -plaintext -d '{"checkout_id": "test-123", "items": [{"product_id": 1, "quantity": 2}]}' localhost:50053 inventory.InventoryService/Reserve
+```
 
 ---
 
@@ -813,12 +910,13 @@ curl http://localhost:8080/health
 ## Notes
 
 - Using Go 1.25.0
-- Project uses Go workspaces (go.work includes product-service, cart-service, and api-gateway)
+- Project uses Go workspaces (go.work includes product-service, cart-service, api-gateway, and inventory-service)
 - Pure Go SQLite driver chosen for better cross-platform compatibility
 - Migration files use UTF-8 with BOM encoding
 - All services successfully running in parallel:
   - Product Service: localhost:50051 (gRPC) - 2 endpoints (GetProducts, GetProduct)
   - Cart Service: localhost:50052 (gRPC) - **5/5 endpoints complete** (AddItem, GetCart, UpdateQuantity, RemoveItem, ClearCart)
+  - Inventory Service: localhost:50053 (gRPC) - **4/4 endpoints complete** (GetStock, Reserve, Confirm, Release)
   - API Gateway: localhost:8080 (HTTP/REST) - **6 routes active** (5 cart + 1 product: GET /products)
 - Cart Service successfully validated against Product Service and persisting to MongoDB
 - API Gateway successfully communicates with Cart Service via gRPC
@@ -834,7 +932,7 @@ curl http://localhost:8080/health
 
 ## Progress Summary
 
-**Overall Completion:** ~60%
+**Overall Completion:** ~65%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -857,7 +955,7 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
 - ❌ Checkout Service: 0%
 - ❌ Orders Service: 0%
-- ❌ Inventory Service: 0%
+- ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ❌ Payment Service: 0%
 - 🔄 Infrastructure (Docker): 40% (MongoDB and Redis configured, services and Kafka pending)
 
@@ -869,7 +967,24 @@ curl http://localhost:8080/health
 
 **Recent Progress (January 18, 2026):**
 
-**Session 7 - Remove Stock Field from Product Service (Current - Uncommitted):**
+**Session 8 - Inventory Service Implementation:**
+- ✅ **Implemented complete Inventory Service** (Phase 2 service)
+  - In-memory stub for stock management and reservations
+  - 4 gRPC endpoints: GetStock, Reserve, Confirm, Release
+  - Thread-safe implementation with sync.RWMutex
+  - Background cleanup goroutine for expired reservations (30s interval)
+  - 5-minute reservation TTL with auto-expiration
+  - Graceful shutdown with sync.WaitGroup
+- ✅ **Domain models:** ReservationStatus enum, Reservation, ReservationItem, StockInfo
+- ✅ **Store layer:** Interface + in-memory implementation with two-phase validation
+- ✅ **gRPC handler:** Input validation, domain↔proto conversion, error mapping
+- ✅ **Comprehensive unit tests:** 23 tests (11 store + 12 handler), all passing
+- ✅ **Initial stock seeded:** Matches product-service (5 products: 100-500 units)
+- ✅ **Added to go.work and test-all.ps1**
+- ✅ **Updated HIGH_LEVEL_IMPLEMENTATION_PLAN.md** with correct service ports
+- **Service port:** 50053 (gRPC)
+
+**Session 7 - Remove Stock Field from Product Service:**
 - ✅ **Removed stock field from Product Service** - Stock/inventory data will be managed by future Inventory Service
   - Removed `Stock` field from domain.Product entity
   - Removed `stock` column from SQL queries in repository

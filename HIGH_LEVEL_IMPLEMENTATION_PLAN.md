@@ -893,13 +893,13 @@ services:
 ```
 
 ### Service Ports
-- API Gateway: `:8080`
-- Cart Service: `:8081` (gRPC)
-- Checkout Service: `:8082` (gRPC)
-- Orders Service: `:8083` (gRPC)
-- Product Service: `:8084` (gRPC)
-- Inventory Service: `:8085` (gRPC)
-- Payment Service: `:8086` (gRPC)
+- API Gateway: `:8080` (HTTP)
+- Product Service: `:50051` (gRPC)
+- Cart Service: `:50052` (gRPC)
+- Inventory Service: `:50053` (gRPC)
+- Checkout Service: `:50054` (gRPC) - planned
+- Orders Service: `:50055` (gRPC) - planned
+- Payment Service: `:50056` (gRPC) - planned
 
 ---
 
