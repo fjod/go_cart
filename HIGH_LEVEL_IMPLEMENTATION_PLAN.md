@@ -480,10 +480,11 @@ CREATE TABLE products (
     description TEXT,
     price REAL NOT NULL,
     image_url TEXT,
-    stock INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
+
+> **Note:** Stock/inventory data is managed by the Inventory Service, not the Product Service. This separation allows independent scaling and follows the single-responsibility principle.
 
 **gRPC Service Interface:**
 ```protobuf
@@ -495,24 +496,26 @@ service ProductService {
 ```
 
 **Sample Data:**
-- Laptop: $1299.99 (50 in stock)
-- Mouse: $29.99 (200 in stock)
-- Keyboard: $89.99 (100 in stock)
-- Monitor: $399.99 (75 in stock)
-- Headphones: $249.99 (150 in stock)
+- Laptop: $1299.99
+- Mouse: $29.99
+- Keyboard: $89.99
+- Monitor: $399.99
+- Headphones: $249.99
 
 ---
 
 ### 6. Inventory Service
 
 **Purpose:**
-Manages inventory reservations during checkout. This is a stub/mock service for learning purposes.
+Manages product stock levels and inventory reservations during checkout. This is a stub/mock service for learning purposes that holds stock data in-memory.
 
 **Responsibilities:**
+- **Store and query product stock levels** (in-memory)
 - Reserve items temporarily during checkout (5-minute TTL)
 - Confirm reservation (permanent stock deduction)
 - Release reservation (timeout or payment failure)
 - Automatic expiration of unreserved items
+- Validate stock availability for cart operations
 
 **Technology Stack:**
 - Storage: In-memory map (no persistence for stub)
@@ -538,9 +541,10 @@ type ReservationItem struct {
 **gRPC Service Interface:**
 ```protobuf
 service InventoryService {
-  rpc Reserve(ReserveRequest) returns (ReserveResponse);
-  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
-  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);        // Query stock for product(s)
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);           // Reserve during checkout
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);           // Confirm after payment
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);           // Release on failure
 }
 ```
 

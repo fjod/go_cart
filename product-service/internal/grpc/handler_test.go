@@ -26,7 +26,7 @@ func (m *mockRepository) GetAllProducts(context.Context) ([]*domain.Product, err
 	return m.products, m.err
 }
 
-func (m *mockRepository) GetProduct(ctx context.Context, id int64) (*domain.Product, error) {
+func (m *mockRepository) GetProduct(_ context.Context, id int64) (*domain.Product, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -50,7 +50,6 @@ func TestGetAllProducts_Success(t *testing.T) {
 				Description: "Test Description",
 				Price:       99.99,
 				ImageURL:    "http://example.com/image.jpg",
-				Stock:       10,
 				CreatedAt:   time.Now(),
 			},
 		},
@@ -82,7 +81,6 @@ func TestGetProduct_Success(t *testing.T) {
 				Description: "Test Description",
 				Price:       99.99,
 				ImageURL:    "http://example.com/image.jpg",
-				Stock:       10,
 				CreatedAt:   time.Now(),
 			},
 		},
@@ -112,7 +110,6 @@ func TestGetProduct_NotFound(t *testing.T) {
 				Description: "Test Description",
 				Price:       99.99,
 				ImageURL:    "http://example.com/image.jpg",
-				Stock:       10,
 				CreatedAt:   time.Now(),
 			},
 		},

@@ -84,7 +84,6 @@ func TestAddItemToCart_Success(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 10, // Sufficient stock
 			},
 		},
 	}
@@ -121,7 +120,6 @@ func TestGetCart_Integration(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 10,
 			},
 		},
 	}
@@ -168,7 +166,6 @@ func TestUpdateQuantity_Integration(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 50,
 			},
 		},
 	}
@@ -209,7 +206,6 @@ func TestRemoveItem_Integration(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 50,
 			},
 		},
 	}
@@ -257,7 +253,6 @@ func TestClearCart_Integration(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 50,
 			},
 		},
 	}

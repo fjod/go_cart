@@ -1,0 +1,1 @@
+ALTER TABLE products Add COLUMN stock integer NOT NULL DEFAULT 100;

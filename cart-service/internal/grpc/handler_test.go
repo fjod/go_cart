@@ -199,7 +199,6 @@ func TestAddItem_Success(t *testing.T) {
 				Id:    1,
 				Name:  "Test Product",
 				Price: 99.99,
-				Stock: 10, // Sufficient stock
 			},
 		},
 	}
@@ -249,38 +248,6 @@ func TestAddItem_NotFound(t *testing.T) {
 
 	assert.Nil(t, ret)
 	assert.True(t, status.Code(err) == codes.NotFound)
-}
-
-func TestAddItem_NoStock(t *testing.T) {
-	cart := &domain.Cart{
-		Items:     []domain.CartItem{},
-		UserID:    "123",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	service := createCacheAndRepo(cart)
-
-	// Create mock for ProductServiceClient that returns a valid product
-	mockProductClient := &mockProductServiceClient{
-		getProductResp: &productpb.GetProductResponse{
-			Product: &productpb.Product{
-				Id:    1,
-				Name:  "Test Product",
-				Price: 99.99,
-				Stock: 10, // Sufficient stock
-			},
-		},
-	}
-
-	server := NewCartServiceServer(service, mockProductClient)
-	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
-		UserId:    123,
-		ProductId: 1,
-		Quantity:  50,
-	})
-
-	assert.Nil(t, ret)
-	assert.True(t, status.Code(err) == codes.FailedPrecondition)
 }
 
 func TestUpdateQuantity_Success(t *testing.T) {

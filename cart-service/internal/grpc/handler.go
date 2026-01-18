@@ -85,7 +85,7 @@ func (s *CartServiceServer) AddItem(
 	}
 
 	// Call product-service to validate if product exists
-	productResp, err := s.productClient.GetProduct(ctx, &productpb.GetProductRequest{
+	_, err := s.productClient.GetProduct(ctx, &productpb.GetProductRequest{
 		Id: req.ProductId,
 	})
 	if err != nil {
@@ -96,12 +96,6 @@ func (s *CartServiceServer) AddItem(
 			}
 		}
 		return nil, status.Errorf(codes.Internal, "failed to validate product: %v", err)
-	}
-
-	// Check if product has sufficient stock
-	if productResp.Product.Stock < req.Quantity {
-		return nil, status.Errorf(codes.FailedPrecondition, "insufficient stock: available=%d, requested=%d",
-			productResp.Product.Stock, req.Quantity)
 	}
 
 	// Convert user_id to string for MongoDB

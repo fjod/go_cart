@@ -11,7 +11,6 @@ message Product {
   string description = 3;
   double price = 4;
   string image_url = 5;
-  int32 stock = 6;
   string created_at = 7;  // RFC3339 format
 }
 

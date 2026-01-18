@@ -63,7 +63,7 @@ func NewRepository(dbPath string) (*Repository, error) {
 
 func (r *Repository) GetAllProducts(ctx context.Context) ([]*domain.Product, error) {
 	query := `
-		SELECT id, name, description, price, image_url, stock, created_at
+		SELECT id, name, description, price, image_url, created_at
 		FROM products
 		ORDER BY id
 	`
@@ -83,7 +83,6 @@ func (r *Repository) GetAllProducts(ctx context.Context) ([]*domain.Product, err
 			&p.Description,
 			&p.Price,
 			&p.ImageURL,
-			&p.Stock,
 			&p.CreatedAt,
 		)
 		if err != nil {
@@ -101,7 +100,7 @@ func (r *Repository) GetAllProducts(ctx context.Context) ([]*domain.Product, err
 
 func (r *Repository) GetProduct(ctx context.Context, id int64) (*domain.Product, error) {
 	query := `
-		SELECT id, name, description, price, image_url, stock, created_at
+		SELECT id, name, description, price, image_url, created_at
 		FROM products
 		WHERE id = $1
 	`
@@ -122,7 +121,6 @@ func (r *Repository) GetProduct(ctx context.Context, id int64) (*domain.Product,
 			&p.Description,
 			&p.Price,
 			&p.ImageURL,
-			&p.Stock,
 			&p.CreatedAt,
 		)
 		if err != nil {

@@ -45,7 +45,6 @@ func (s *ProductServiceServer) GetProducts(
 			Description: p.Description,
 			Price:       p.Price,
 			ImageUrl:    p.ImageURL,
-			Stock:       p.Stock,
 			CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}
@@ -77,7 +76,6 @@ func (s *ProductServiceServer) GetProduct(
 		Description: p.Description,
 		Price:       p.Price,
 		ImageUrl:    p.ImageURL,
-		Stock:       p.Stock,
 		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 

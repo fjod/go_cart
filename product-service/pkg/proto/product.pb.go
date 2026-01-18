@@ -29,7 +29,6 @@ type Product struct {
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	Price         float64                `protobuf:"fixed64,4,opt,name=price,proto3" json:"price,omitempty"`
 	ImageUrl      string                 `protobuf:"bytes,5,opt,name=image_url,json=imageUrl,proto3" json:"image_url,omitempty"`
-	Stock         int32                  `protobuf:"varint,6,opt,name=stock,proto3" json:"stock,omitempty"`
 	CreatedAt     string                 `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // RFC3339 format
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -98,13 +97,6 @@ func (x *Product) GetImageUrl() string {
 		return x.ImageUrl
 	}
 	return ""
-}
-
-func (x *Product) GetStock() int32 {
-	if x != nil {
-		return x.Stock
-	}
-	return 0
 }
 
 func (x *Product) GetCreatedAt() string {
@@ -288,14 +280,13 @@ var File_pkg_proto_product_proto protoreflect.FileDescriptor
 
 const file_pkg_proto_product_proto_rawDesc = "" +
 	"\n" +
-	"\x17pkg/proto/product.proto\x12\aproduct\"\xb7\x01\n" +
+	"\x17pkg/proto/product.proto\x12\aproduct\"\xa1\x01\n" +
 	"\aProduct\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x14\n" +
 	"\x05price\x18\x04 \x01(\x01R\x05price\x12\x1b\n" +
-	"\timage_url\x18\x05 \x01(\tR\bimageUrl\x12\x14\n" +
-	"\x05stock\x18\x06 \x01(\x05R\x05stock\x12\x1d\n" +
+	"\timage_url\x18\x05 \x01(\tR\bimageUrl\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\a \x01(\tR\tcreatedAt\"\x14\n" +
 	"\x12GetProductsRequest\"#\n" +

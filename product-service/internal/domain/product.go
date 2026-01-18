@@ -8,6 +8,5 @@ type Product struct {
 	Description string
 	Price       float64
 	ImageURL    string
-	Stock       int32
 	CreatedAt   time.Time
 }

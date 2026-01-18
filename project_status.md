@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 16, 2026
+**Last Updated:** January 18, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -25,11 +25,12 @@ This document tracks the implementation status of the e-commerce platform micros
 - ✅ Database migration infrastructure using `golang-migrate/migrate`
 - ✅ Products table schema creation (product-service/internal/repository/migrations/001_create_products_table.up.sql:1-11)
 - ✅ Sample product data seeding with 5 products (product-service/internal/repository/migrations/000002_seed_products.up.sql:1-6)
-  - Laptop: $1299.99 (50 in stock)
-  - Mouse: $29.99 (200 in stock)
-  - Keyboard: $89.99 (100 in stock)
-  - Monitor: $399.99 (75 in stock)
-  - Headphones: $249.99 (150 in stock)
+  - Laptop: $1299.99
+  - Mouse: $29.99
+  - Keyboard: $89.99
+  - Monitor: $399.99
+  - Headphones: $249.99
+  - *(Stock data moved to future Inventory Service)*
 - ✅ Migration runner implementation (product-service/internal/repository/repository.go:20-46)
 - ✅ Domain model (Product entity) (product-service/internal/domain/product.go:1-13)
 - ✅ Repository interface pattern for testability (product-service/internal/repository/repository.go:20-24)
@@ -38,7 +39,7 @@ This document tracks the implementation status of the e-commerce platform micros
   - `Close()` - Resource cleanup
   - `RunMigrations()` - Database schema management
 - ✅ Protobuf service definitions (product-service/pkg/proto/product.proto:1-31)
-  - Product message with 7 fields
+  - Product message with 6 fields (stock removed - managed by Inventory Service)
   - GetProductsRequest/Response messages
   - ProductService with GetProducts RPC
 - ✅ gRPC service implementation (product-service/internal/grpc/handler.go:1-56)
@@ -153,19 +154,19 @@ product-service/
   - Business rule enforcement (quantity 1-99, product_id validation)
   - **End-to-end tested:** All endpoints successfully interact with MongoDB cartdb collection
 - ✅ Comprehensive gRPC handler unit tests (cart-service/internal/grpc/handler_test.go)
-  - **10 top-level test functions (16 total test cases including subtests)**
+  - **9 top-level test functions (15 total test cases including subtests)**
   - TestGetCart_Success - validates cart retrieval with multiple items
   - TestAddItem_Success - validates item addition
   - TestAddItem_NotFound - validates product not found error handling
-  - TestAddItem_NoStock - validates out-of-stock error handling
-  - TestUpdateQuantity_Success - validates quantity updates (NEW)
-  - TestUpdateQuantity_InvalidInput - validates input validation with 4 subtests (NEW)
-  - TestRemoveItem_Success - validates item removal (NEW)
-  - TestRemoveItem_InvalidInput - validates input validation with 2 subtests (NEW)
-  - TestClearCart_Success - validates cart clearing (NEW)
-  - TestClearCart_InvalidInput - validates user_id validation (NEW)
+  - TestUpdateQuantity_Success - validates quantity updates
+  - TestUpdateQuantity_InvalidInput - validates input validation with 4 subtests
+  - TestRemoveItem_Success - validates item removal
+  - TestRemoveItem_InvalidInput - validates input validation with 2 subtests
+  - TestClearCart_Success - validates cart clearing
+  - TestClearCart_InvalidInput - validates user_id validation
   - Mock implementations for Repository and ProductServiceClient
-  - **All tests passing (10/10 functions, 16/16 cases)**
+  - **All tests passing (9/9 functions, 15/15 cases)**
+  - *(Stock validation removed - will be handled by Inventory Service)*
 - ✅ Product Service integration
   - gRPC client connection to Product Service (localhost:50051)
   - Product validation before adding to cart
@@ -634,7 +635,7 @@ api-gateway/
   - **10 top-level test functions, 16 total test cases (including subtests)**
   - Mock implementations for Service and ProductServiceClient
   - Comprehensive coverage for all 5 endpoints
-  - **All tests passing (10/10 functions, 16/16 cases)**
+  - **All tests passing (9/9 functions, 15/15 cases)**
 - ✅ gRPC handler integration tests - COMPLETE (cart-service/internal/grpc/handler_integration_test.go)
   - **5 integration test functions using real MongoDB + Redis (testcontainers)**
   - TestAddItemToCart_Success - validates full add-to-cart flow
@@ -742,7 +743,7 @@ go test ./internal/cache/ -v
 # Run gRPC handler unit tests
 cd cart-service
 go test ./internal/grpc/ -v -run "^Test[^I]"
-# Output: 10/10 top-level tests passing, 16/16 total test cases
+# Output: 9/9 top-level tests passing, 15/15 total test cases
 
 # Run gRPC handler integration tests (requires Docker)
 cd cart-service
@@ -846,7 +847,7 @@ curl http://localhost:8080/health
 - ✅ Cart Service Repository Layer: 100%
 - ✅ **Cart Service Service Layer: 100% (cache-aside pattern, singleflight, graceful degradation)**
 - ✅ **Cart Service gRPC Layer: 100% (All 5 endpoints using service layer)**
-- ✅ **Cart Service Tests: 100% (Repository 8 tests, Cache 8 tests, Service 12 tests, Handler 16 unit + 5 integration = 49 total)**
+- ✅ **Cart Service Tests: 100% (Repository 8 tests, Cache 8 tests, Service 12 tests, Handler 15 unit + 5 integration = 48 total)**
 - ✅ Cart Service Production Readiness: 75% (env vars, graceful shutdown, Redis integration done)
 - ✅ **Cart Service Redis Integration: 100% (Steps 1-7/7 complete)**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
@@ -866,9 +867,28 @@ curl http://localhost:8080/health
 - **API Gateway ~75% complete (All 5 cart + 1 product endpoints complete with tests; e2e tests pending)**
 - Docker Infrastructure ~40% complete (MongoDB and Redis done)
 
-**Recent Progress (January 16, 2026):**
+**Recent Progress (January 18, 2026):**
 
-**Session 6 - API Gateway Product Endpoint (Current - Uncommitted):**
+**Session 7 - Remove Stock Field from Product Service (Current - Uncommitted):**
+- ✅ **Removed stock field from Product Service** - Stock/inventory data will be managed by future Inventory Service
+  - Removed `Stock` field from domain.Product entity
+  - Removed `stock` column from SQL queries in repository
+  - Created migration 003_remove_stock_column (up/down)
+  - Updated protobuf: removed `stock` field, kept `created_at = 7` for wire compatibility
+  - Regenerated protobuf code
+- ✅ **Updated Cart Service** - Removed stock validation from AddItem
+  - Removed stock check in cart-service/internal/grpc/handler.go:85-98
+  - Removed TestAddItem_NoStock test (stock validation will be in Inventory Service)
+  - Updated all test fixtures to remove Stock field references
+  - Cart now only validates product existence, not stock availability
+- ✅ **Files changed:** 12 files, -67 lines removed
+  - product-service: domain/product.go, repository/repository.go, grpc/handler.go, proto files, migrations
+  - cart-service: grpc/handler.go, handler_test.go, handler_integration_test.go
+- ✅ **All tests passing** after stock removal
+
+**Previous Progress (January 16, 2026):**
+
+**Session 6 - API Gateway Product Endpoint:**
 - ✅ **Added GET /api/v1/products endpoint** (api-gateway/internal/http/product_handler.go)
   - ProductHandler struct with gRPC client injection and timeout
   - Calls Product Service via gRPC GetProducts RPC
@@ -950,7 +970,7 @@ curl http://localhost:8080/health
   - TestRemoveItem_Success and TestRemoveItem_InvalidInput (2 subtests)
   - TestClearCart_Success and TestClearCart_InvalidInput
   - **Total: 10 top-level test functions, 16 test cases including subtests**
-  - All tests passing (10/10 functions, 16/16 cases)
+  - All tests passing (9/9 functions, 15/15 cases)
 - ✅ **Updated Cart Service protobuf definitions** (cart-service/pkg/proto/cart.proto)
   - Added UpdateQuantityRequest, RemoveItemRequest, ClearCartRequest messages
   - Added 3 new RPC methods to CartService
