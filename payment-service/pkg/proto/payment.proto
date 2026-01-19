@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package payment;
+
+option go_package = "github.com/fjod/go_cart/payment-service/pkg/proto";
+
+enum ChargeStatus {
+  CHARGE_STATUS_SUCCESS = 0;
+  CHARGE_STATUS_FAILED = 1;
+}
+
+enum PaymentRefusal{
+    UNKNOWN = 0;
+    NO_FUNDS = 1;
+    CARD_DECLINED = 2;
+    CARD_EXPIRED = 3;
+    INVALID_CCV = 4;
+    NETWORK_ERROR = 5;
+}
+
+message ChargeResponse {
+  ChargeStatus status = 1;
+  string transaction_id = 2;
+  oneof refusal {
+    PaymentRefusal known_reason = 3;
+    string other_reason = 4;  // free-form when enum doesn't fit
+  }
+  string checkout_id = 5;
+}
+
+message ChargeRequest{
+  string checkout_id = 1;
+}
+
+message RefundRequest{
+  string checkout_id = 1;
+}
+
+message RefundResponse{}
+
+// Payment service definition
+service PaymentService {
+  rpc Charge(ChargeRequest) returns (ChargeResponse);
+  rpc Refund(RefundRequest) returns (RefundResponse);
+}

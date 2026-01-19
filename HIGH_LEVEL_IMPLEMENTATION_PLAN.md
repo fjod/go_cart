@@ -897,9 +897,9 @@ services:
 - Product Service: `:50051` (gRPC)
 - Cart Service: `:50052` (gRPC)
 - Inventory Service: `:50053` (gRPC)
-- Checkout Service: `:50054` (gRPC) - planned
+- Payment Service: `:50054` (gRPC) - stub implemented
 - Orders Service: `:50055` (gRPC) - planned
-- Payment Service: `:50056` (gRPC) - planned
+- Checkout Service: `:50056` (gRPC) - planned
 
 ---
 

@@ -5,4 +5,5 @@ use (
 	./cart-service
 	./api-gateway
 	./inventory-service
+	./payment-service
 )
