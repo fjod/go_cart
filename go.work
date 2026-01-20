@@ -6,4 +6,5 @@ use (
 	./api-gateway
 	./inventory-service
 	./payment-service
+	./checkout-service
 )

@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 19, 2026
+**Last Updated:** January 20, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -440,9 +440,111 @@ api-gateway/
 ### Phase 2: Checkout Orchestration 🔄 In Progress
 
 **Services:**
-- ⏳ Checkout Service (saga orchestrator)
+- 🔄 Checkout Service (saga orchestrator) - **IN PROGRESS**
 - ✅ Inventory Service (in-memory stub) - **COMPLETED**
 - ✅ Payment Service (mock stub) - **COMPLETED**
+
+---
+
+#### Checkout Service 🔄 In Progress
+
+**Status:** Database infrastructure scaffolded, core business logic pending
+
+**Completed:**
+- ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
+- ✅ Added to Go workspace (go.work)
+- ✅ PostgreSQL database driver integration (`github.com/lib/pq`)
+- ✅ Database migration infrastructure using `golang-migrate/migrate`
+- ✅ checkout_sessions table schema (checkout-service/internal/repository/migrations/001_create_tables.up.sql:1-16)
+  - id UUID PRIMARY KEY
+  - user_id VARCHAR(255) NOT NULL
+  - status VARCHAR(50) NOT NULL (pending | completed | failed | cancelled)
+  - total_amount DECIMAL(10, 2) NOT NULL
+  - created_at, updated_at TIMESTAMP with DEFAULT NOW()
+  - SQL comments documenting each column's purpose
+- ✅ outbox_events table for Transactional Outbox Pattern (checkout-service/internal/repository/migrations/001_create_tables.up.sql:18-39)
+  - id BIGSERIAL PRIMARY KEY (auto-incrementing for ordering)
+  - aggregate_id UUID NOT NULL (FK to checkout_sessions)
+  - event_type VARCHAR(100) NOT NULL
+  - payload JSONB NOT NULL (cart snapshot)
+  - created_at TIMESTAMP, processed_at TIMESTAMP (NULL while pending)
+  - Partial index `idx_outbox_unprocessed` for efficient polling
+  - Foreign key constraint linking events to checkout sessions
+- ✅ Down migration for rollback (checkout-service/internal/repository/migrations/001_create_tables.down.sql)
+- ✅ Repository layer with PostgreSQL connection (checkout-service/internal/repository/repository.go)
+  - Credentials struct for connection configuration
+  - NewRepository() with connection pooling (MaxOpenConns: 100, MaxIdleConns: 10)
+  - RunMigrations() using golang-migrate
+  - Close() for resource cleanup
+  - RepoInterface defined for testability
+- ✅ Main entry point (checkout-service/main.go)
+  - Environment variable configuration (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH)
+  - Database connection with ping verification
+  - Migration execution on startup
+  - Proper error handling with log.Fatal on failures
+- ✅ PostgreSQL container added to Docker Compose (deployments/docker-compose.dev.yml)
+  - postgres:16-alpine image
+  - Port mapping: 5432:5432
+  - Credentials: postgres/postgres
+  - Database: ecommerce
+  - Persistent volume: postgres_data
+
+**Pending (per HIGH_LEVEL_IMPLEMENTATION_PLAN.md):**
+- ⏳ Extended checkout_sessions columns for full saga support:
+  - cart_snapshot JSONB (cart state at checkout time)
+  - idempotency_key VARCHAR(255) UNIQUE (prevent duplicate charges)
+  - inventory_reservation_id VARCHAR(255) (saga state tracking)
+  - payment_id VARCHAR(255) (saga state tracking)
+  - order_id UUID (saga state tracking)
+  - currency VARCHAR(3) DEFAULT 'USD'
+  - shipping_address JSONB
+  - payment_method VARCHAR(50)
+  - completed_at TIMESTAMP
+- ⏳ Domain models (CheckoutSession, CheckoutStatus enum)
+- ⏳ Protobuf service definitions
+  - InitiateCheckout RPC
+  - GetCheckoutStatus RPC
+- ⏳ gRPC handler implementation
+- ⏳ Saga orchestration logic
+  - Reserve inventory → Process payment → Publish event → Complete
+  - Compensation logic for failures (release inventory on payment failure)
+- ⏳ gRPC clients for Inventory and Payment services
+- ⏳ Outbox poller (background job to publish events to Kafka)
+- ⏳ Idempotency handling
+- ⏳ Unit tests for repository and handler layers
+- ⏳ Integration tests
+- ⏳ gRPC server setup with graceful shutdown
+
+**File Structure:**
+```
+checkout-service/
+├── main.go                              ✅ Entry point with migration execution
+├── internal/
+│   └── repository/
+│       ├── repository.go                ✅ PostgreSQL connection + migrations
+│       └── migrations/
+│           ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
+│           └── 001_create_tables.down.sql ✅ Rollback migration
+├── go.mod                               ✅ Dependencies (lib/pq, golang-migrate)
+└── go.sum                               ✅ Auto-generated
+```
+
+**How to Run:**
+```bash
+# Start PostgreSQL (requires Docker)
+docker-compose -f deployments/docker-compose.dev.yml up -d postgres
+
+# Run checkout service (connects to DB and runs migrations)
+go run ./checkout-service/main.go
+```
+
+**Expected Output:**
+```
+2026/01/20 [timestamp] checkout-service started
+Connected to postgres!
+2026/01/20 [timestamp] Migrations completed successfully
+2026/01/20 [timestamp] checkout-service exited
+```
 
 ---
 
@@ -975,7 +1077,7 @@ curl http://localhost:8080/health
 ## Notes
 
 - Using Go 1.25.0
-- Project uses Go workspaces (go.work includes product-service, cart-service, api-gateway, inventory-service, and payment-service)
+- Project uses Go workspaces (go.work includes product-service, cart-service, api-gateway, inventory-service, payment-service, and checkout-service)
 - Pure Go SQLite driver chosen for better cross-platform compatibility
 - Migration files use UTF-8 with BOM encoding
 - All services successfully running in parallel:
@@ -983,6 +1085,7 @@ curl http://localhost:8080/health
   - Cart Service: localhost:50052 (gRPC) - **5/5 endpoints complete** (AddItem, GetCart, UpdateQuantity, RemoveItem, ClearCart)
   - Inventory Service: localhost:50053 (gRPC) - **4/4 endpoints complete** (GetStock, Reserve, Confirm, Release)
   - Payment Service: localhost:50054 (gRPC) - **2/2 endpoints complete** (Charge, Refund)
+  - Checkout Service: localhost:50056 (gRPC) - **scaffolding only** (migrations run, gRPC server pending)
   - API Gateway: localhost:8080 (HTTP/REST) - **6 routes active** (5 cart + 1 product: GET /products)
 - Cart Service successfully validated against Product Service and persisting to MongoDB
 - API Gateway successfully communicates with Cart Service via gRPC
@@ -1019,19 +1122,52 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- ❌ Checkout Service: 0%
+- 🔄 **Checkout Service: ~15%** (PostgreSQL + migrations + outbox table scaffolded; saga logic pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
-- 🔄 Infrastructure (Docker): 40% (MongoDB and Redis configured, services and Kafka pending)
+- 🔄 Infrastructure (Docker): 50% (MongoDB, Redis, and PostgreSQL configured; Kafka pending)
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
 - **Cart Service ~98% complete (All 5 gRPC endpoints with Redis caching, service layer, unit + integration tests)**
 - **API Gateway ~75% complete (All 5 cart + 1 product endpoints complete with tests; e2e tests pending)**
-- Docker Infrastructure ~40% complete (MongoDB and Redis done)
+- Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
-**Recent Progress (January 19, 2026):**
+**Phase 2 Progress:**
+- **Checkout Service ~15% complete (DB scaffolding done; saga orchestration, gRPC endpoints, outbox poller pending)**
+- Inventory Service ✅ 100% complete
+- Payment Service ✅ 100% complete
+
+**Recent Progress (January 20, 2026):**
+
+**Session 10 - Checkout Service Infrastructure:**
+- ✅ **Scaffolded Checkout Service database layer** (Phase 2 saga orchestrator)
+  - PostgreSQL connection with connection pooling (100 open, 10 idle)
+  - golang-migrate integration for schema management
+- ✅ **Created checkout_sessions table**
+  - Core fields: id (UUID), user_id, status, total_amount, timestamps
+  - Simplified schema to start (full saga columns to be added incrementally)
+- ✅ **Created outbox_events table for Transactional Outbox Pattern**
+  - BIGSERIAL id for event ordering
+  - aggregate_id with FK to checkout_sessions
+  - JSONB payload for cart snapshot
+  - Partial index on processed_at IS NULL for efficient polling
+- ✅ **Environment variable configuration**
+  - DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH
+  - Sensible defaults matching docker-compose
+- ✅ **Added PostgreSQL to docker-compose.dev.yml**
+  - postgres:16-alpine image
+  - Persistent volume for data
+- ✅ **Added checkout-service to go.work**
+- ✅ **Code review feedback incorporated:**
+  - Fixed DB_PATH → DB_HOST naming
+  - Added port parsing error handling
+  - Added connection pooling configuration
+  - Removed UTF-8 BOM from source files
+- **Service port:** 50056 (gRPC - planned)
+
+**Previous Progress (January 19, 2026):**
 
 **Session 9 - Payment Service Implementation:**
 - ✅ **Implemented complete Payment Service stub** (Phase 2 service)
