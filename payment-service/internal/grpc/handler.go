@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/fjod/go_cart/payment-service/pkg/proto"
+	"github.com/google/uuid"
 )
 
 type GetResponseStatus interface {
@@ -55,6 +56,7 @@ func (s *PaymentServiceServer) Charge(_ context.Context, r *pb.ChargeRequest) (*
 			Refusal: &pb.ChargeResponse_KnownReason{
 				KnownReason: refusalKnown,
 			},
+			ReservationId: uuid.New().String(),
 		}, nil
 	}
 	return &pb.ChargeResponse{
@@ -64,6 +66,7 @@ func (s *PaymentServiceServer) Charge(_ context.Context, r *pb.ChargeRequest) (*
 		Refusal: &pb.ChargeResponse_OtherReason{
 			OtherReason: refusalOther,
 		},
+		ReservationId: uuid.New().String(),
 	}, nil
 }
 

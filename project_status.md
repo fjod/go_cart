@@ -448,20 +448,26 @@ api-gateway/
 
 #### Checkout Service 🔄 In Progress
 
-**Status:** Database infrastructure scaffolded, core business logic pending
+**Status:** Full database schema with saga state tracking implemented, domain models and gRPC pending
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
 - ✅ Added to Go workspace (go.work)
 - ✅ PostgreSQL database driver integration (`github.com/lib/pq`)
 - ✅ Database migration infrastructure using `golang-migrate/migrate`
-- ✅ checkout_sessions table schema (checkout-service/internal/repository/migrations/001_create_tables.up.sql:1-16)
+- ✅ checkout_sessions table schema (checkout-service/internal/repository/migrations/001_create_tables.up.sql:1-31)
   - id UUID PRIMARY KEY
   - user_id VARCHAR(255) NOT NULL
+  - cart_snapshot JSONB NOT NULL (cart state at checkout time for audit/compensation)
   - status VARCHAR(50) NOT NULL (pending | completed | failed | cancelled)
+  - idempotency_key VARCHAR(255) UNIQUE NOT NULL (prevent duplicate checkouts)
+  - inventory_reservation_id VARCHAR(255) (saga state - Inventory Service)
+  - payment_id VARCHAR(255) (saga state - Payment Service)
   - total_amount DECIMAL(10, 2) NOT NULL
+  - currency VARCHAR(3) NOT NULL DEFAULT 'USD'
   - created_at, updated_at TIMESTAMP with DEFAULT NOW()
-  - SQL comments documenting each column's purpose
+  - **Indexes:** idx_checkout_idempotency, idx_checkout_user, idx_checkout_status
+  - SQL COMMENT statements documenting table and columns
 - ✅ outbox_events table for Transactional Outbox Pattern (checkout-service/internal/repository/migrations/001_create_tables.up.sql:18-39)
   - id BIGSERIAL PRIMARY KEY (auto-incrementing for ordering)
   - aggregate_id UUID NOT NULL (FK to checkout_sessions)
@@ -490,16 +496,11 @@ api-gateway/
   - Persistent volume: postgres_data
 
 **Pending (per HIGH_LEVEL_IMPLEMENTATION_PLAN.md):**
-- ⏳ Extended checkout_sessions columns for full saga support:
-  - cart_snapshot JSONB (cart state at checkout time)
-  - idempotency_key VARCHAR(255) UNIQUE (prevent duplicate charges)
-  - inventory_reservation_id VARCHAR(255) (saga state tracking)
-  - payment_id VARCHAR(255) (saga state tracking)
-  - order_id UUID (saga state tracking)
-  - currency VARCHAR(3) DEFAULT 'USD'
+- ⏳ Optional extended columns (if needed later):
   - shipping_address JSONB
   - payment_method VARCHAR(50)
   - completed_at TIMESTAMP
+  - *(Note: order_id intentionally omitted - Orders Service owns that relationship)*
 - ⏳ Domain models (CheckoutSession, CheckoutStatus enum)
 - ⏳ Protobuf service definitions
   - InitiateCheckout RPC
@@ -1122,7 +1123,7 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- 🔄 **Checkout Service: ~15%** (PostgreSQL + migrations + outbox table scaffolded; saga logic pending)
+- 🔄 **Checkout Service: ~25%** (Full schema with saga state columns, idempotency, indexes; domain models + gRPC pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
@@ -1135,7 +1136,7 @@ curl http://localhost:8080/health
 - Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
 **Phase 2 Progress:**
-- **Checkout Service ~15% complete (DB scaffolding done; saga orchestration, gRPC endpoints, outbox poller pending)**
+- **Checkout Service ~25% complete (Full schema with saga columns + idempotency + indexes; domain models, gRPC endpoints, outbox poller pending)**
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 
@@ -1145,9 +1146,12 @@ curl http://localhost:8080/health
 - ✅ **Scaffolded Checkout Service database layer** (Phase 2 saga orchestrator)
   - PostgreSQL connection with connection pooling (100 open, 10 idle)
   - golang-migrate integration for schema management
-- ✅ **Created checkout_sessions table**
-  - Core fields: id (UUID), user_id, status, total_amount, timestamps
-  - Simplified schema to start (full saga columns to be added incrementally)
+- ✅ **Created checkout_sessions table with full saga support**
+  - Core fields: id (UUID), user_id, status, total_amount, currency, timestamps
+  - cart_snapshot JSONB for audit trail and compensation
+  - idempotency_key UNIQUE for duplicate prevention
+  - Saga state: inventory_reservation_id, payment_id
+  - Indexes: idempotency_key, user_id, status for query optimization
 - ✅ **Created outbox_events table for Transactional Outbox Pattern**
   - BIGSERIAL id for event ordering
   - aggregate_id with FK to checkout_sessions
@@ -1165,6 +1169,10 @@ curl http://localhost:8080/health
   - Added port parsing error handling
   - Added connection pooling configuration
   - Removed UTF-8 BOM from source files
+- ✅ **Enhanced schema to production-ready state**
+  - Added cart_snapshot, idempotency_key, saga state columns
+  - Added indexes for query performance
+  - Added COMMENT statements for documentation
 - **Service port:** 50056 (gRPC - planned)
 
 **Previous Progress (January 19, 2026):**

@@ -26,6 +26,24 @@ This document outlines the high-level implementation plan for building an e-comm
 - **Kafka** - Message broker for event-driven communication
 - **gRPC** - Inter-service communication protocol
 
+### Key Architectural Principles
+
+**Service Boundaries:**
+- **Product Service** = Catalog data only (name, price, description, image_url)
+- **Inventory Service** = Stock levels and reservations (Available, Reserved counts)
+- **Separation Rationale**: Different scaling needs, update frequencies, and business logic
+
+**Relationship Between Services:**
+- Orders Service creates orders **asynchronously** after Checkout Service publishes events
+- Link maintained via `orders.checkout_id → checkout_sessions.id` (not reverse)
+- Checkout completes and returns to user **before** order record is created
+- This is eventual consistency by design - enables independent service scaling
+
+**Data Ownership:**
+- Each service owns its data exclusively
+- No cross-service database queries
+- All communication via gRPC (sync) or Kafka (async)
+
 ---
 
 ## Service Descriptions
@@ -302,7 +320,9 @@ CREATE TABLE checkout_sessions (
     -- Saga state tracking
     inventory_reservation_id VARCHAR(255),
     payment_id VARCHAR(255),
-    order_id UUID,
+    -- Note: order_id is NOT stored here because Orders Service creates the order
+    -- asynchronously after consuming the Kafka event. The link is maintained via
+    -- orders.checkout_id → checkout_sessions.id
     
     -- Metadata
     total_amount DECIMAL(10, 2) NOT NULL,
@@ -315,6 +335,10 @@ CREATE TABLE checkout_sessions (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMP
 );
+
+CREATE INDEX idx_checkout_idempotency ON checkout_sessions(idempotency_key);
+CREATE INDEX idx_checkout_user ON checkout_sessions(user_id);
+CREATE INDEX idx_checkout_status ON checkout_sessions(status);
 ```
 
 **outbox_events table:**
@@ -327,7 +351,19 @@ CREATE TABLE outbox_events (
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMP
 );
+
+CREATE INDEX idx_outbox_unprocessed ON outbox_events(processed_at) WHERE processed_at IS NULL;
+
+ALTER TABLE outbox_events 
+ADD CONSTRAINT fk_outbox_checkout 
+FOREIGN KEY (aggregate_id) 
+REFERENCES checkout_sessions(id);
 ```
+
+**Notes:**
+- `cart_snapshot` in checkout_sessions: Minimal cart data at checkout time (product_id, quantity, price)
+- `payload` in outbox_events: Enriched event data for Kafka consumers (includes checkout_id, user_id, items with names, timestamps, etc.)
+- Both are needed: cart_snapshot for saga compensation/audit, payload for event consumers
 
 **Checkout State Machine:**
 ```
@@ -343,6 +379,64 @@ COMPLETED
 
 (Any step can transition to FAILED with compensation)
 ```
+
+**Saga Flow (Single Row, Multiple Updates):**
+
+One checkout session = one database row that gets updated through state transitions.
+
+1. **Create Session**: Generate checkout session with idempotency key
+   ```sql
+   INSERT INTO checkout_sessions (id, user_id, cart_snapshot, status, idempotency_key, total_amount)
+   VALUES ('uuid', 'user-123', '[...]', 'INITIATED', 'idem-key', 2599.98);
+   ```
+
+2. **Reserve Inventory**: Call Inventory Service (sync, 30s timeout)
+   - On success:
+     ```sql
+     UPDATE checkout_sessions 
+     SET status = 'INVENTORY_RESERVED', 
+         inventory_reservation_id = 'res-456',
+         updated_at = NOW()
+     WHERE id = 'uuid';
+     ```
+   - On failure: Mark FAILED, return error to user
+
+3. **Process Payment**: Call Payment Service (sync, 60s timeout)
+   - On success:
+     ```sql
+     UPDATE checkout_sessions 
+     SET status = 'PAYMENT_COMPLETED', 
+         payment_id = 'pay-789',
+         updated_at = NOW()
+     WHERE id = 'uuid';
+     ```
+   - On failure: Compensate (release inventory), mark FAILED
+
+4. **Publish Event & Complete**: Write to outbox + update status (atomic transaction)
+   ```sql
+   BEGIN;
+   
+   INSERT INTO outbox_events (aggregate_id, event_type, payload)
+   VALUES ('uuid', 'CheckoutCompleted', '{...enriched event data...}');
+   
+   UPDATE checkout_sessions 
+   SET status = 'COMPLETED',
+       completed_at = NOW(),
+       updated_at = NOW()
+   WHERE id = 'uuid';
+   
+   COMMIT;
+   ```
+
+5. **Outbox Poller**: Background job publishes events to Kafka (eventual)
+
+6. **Return to User**: Checkout completes, user receives response immediately
+
+**Important Notes:**
+- **Idempotency**: Check `idempotency_key` BEFORE starting saga - return existing result if found
+- **State Persistence**: Each saga step updates the SAME row, never creates new rows
+- **Atomic Writes**: Step 4 uses transaction to ensure outbox event + status update are atomic
+- **Async Processing**: Orders Service and Cart Service process events AFTER checkout returns
 
 **Saga Flow:**
 1. **Create Session**: Generate checkout session with idempotency key
@@ -523,6 +617,18 @@ Manages product stock levels and inventory reservations during checkout. This is
 
 **Data Structures:**
 ```go
+type InventoryStore struct {
+    mu           sync.RWMutex
+    items        map[int64]*InventoryItem
+    reservations map[string]*Reservation
+}
+
+type InventoryItem struct {
+    ProductID int64
+    Available int
+    Reserved  int
+}
+
 type Reservation struct {
     ID         string
     CheckoutID string
@@ -535,6 +641,23 @@ type Reservation struct {
 type ReservationItem struct {
     ProductID int64
     Quantity  int
+}
+```
+
+**Initial Stock Data:**
+Initialize with the same 5 products as Product Service:
+```go
+func NewInventoryStore() *InventoryStore {
+    return &InventoryStore{
+        items: map[int64]*InventoryItem{
+            1: {ProductID: 1, Available: 50, Reserved: 0},   // Laptop
+            2: {ProductID: 2, Available: 200, Reserved: 0},  // Mouse
+            3: {ProductID: 3, Available: 100, Reserved: 0},  // Keyboard
+            4: {ProductID: 4, Available: 75, Reserved: 0},   // Monitor
+            5: {ProductID: 5, Available: 150, Reserved: 0},  // Headphones
+        },
+        reservations: make(map[string]*Reservation),
+    }
 }
 ```
 
