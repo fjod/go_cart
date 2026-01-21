@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	d "github.com/fjod/go_cart/checkout-service/domain"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -21,17 +22,17 @@ var (
 // CheckoutSession represents a checkout session in the database.
 // Maps to the checkout_sessions table.
 type CheckoutSession struct {
-	ID                     string          `db:"id"`
-	UserID                 string          `db:"user_id"`
-	CartSnapshot           json.RawMessage `db:"cart_snapshot"`
-	Status                 string          `db:"status"`
-	IdempotencyKey         string          `db:"idempotency_key"`
-	InventoryReservationID *string         `db:"inventory_reservation_id"`
-	PaymentID              *string         `db:"payment_id"`
-	TotalAmount            string          `db:"total_amount"`
-	Currency               string          `db:"currency"`
-	CreatedAt              time.Time       `db:"created_at"`
-	UpdatedAt              time.Time       `db:"updated_at"`
+	ID                     string           `db:"id"`
+	UserID                 string           `db:"user_id"`
+	CartSnapshot           json.RawMessage  `db:"cart_snapshot"`
+	Status                 d.CheckoutStatus `db:"status"`
+	IdempotencyKey         string           `db:"idempotency_key"`
+	InventoryReservationID *string          `db:"inventory_reservation_id"`
+	PaymentID              *string          `db:"payment_id"`
+	TotalAmount            string           `db:"total_amount"`
+	Currency               string           `db:"currency"`
+	CreatedAt              time.Time        `db:"created_at"`
+	UpdatedAt              time.Time        `db:"updated_at"`
 }
 
 type Credentials struct {
@@ -50,7 +51,7 @@ type Repository struct {
 type RepoInterface interface {
 	Close() error
 	RunMigrations(*Credentials) error
-	GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *string, error)
+	GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *d.CheckoutStatus, error)
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -80,7 +81,7 @@ func NewRepository(cred *Credentials) (*Repository, error) {
 	return &Repository{db: db}, nil
 }
 
-func (r *Repository) GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *string, error) {
+func (r *Repository) GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *d.CheckoutStatus, error) {
 	const query = `SELECT id, status FROM checkout_sessions WHERE idempotency_key = $1;`
 
 	var id string
@@ -92,7 +93,8 @@ func (r *Repository) GetCheckoutSessionByIdempotencyKey(ctx context.Context, key
 	if err != nil {
 		return nil, nil, fmt.Errorf("query checkout session: %w", err)
 	}
-	return &id, &status, nil
+	retStatus := d.CheckoutStatus(status)
+	return &id, &retStatus, nil
 }
 
 func (r *Repository) RunMigrations(cred *Credentials) error {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	d "github.com/fjod/go_cart/checkout-service/domain"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,7 +84,7 @@ func TestGetCheckoutSessionByIdempotencyKey_Found(t *testing.T) {
 	query := `INSERT INTO checkout_sessions (id, user_id, cart_snapshot, idempotency_key,  status, total_amount, created_at, updated_at) 
                VALUES ($1, $2, $3, $4, $5, $6,  NOW(), NOW())`
 	keyExp := "existing"
-	statusExp := "pending"
+	statusExp := d.CheckoutStatusCompleted
 	expId := uuid.New()
 	ctx := context.Background()
 	_, insertErr := repo.db.ExecContext(ctx, query,
