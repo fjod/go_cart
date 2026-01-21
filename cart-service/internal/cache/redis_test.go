@@ -150,8 +150,8 @@ func TestSet_WithTTL(t *testing.T) {
 
 	// Check that TTL was set (miniredis tracks TTL)
 	ttl := mr.TTL(cacheKey(userID))
-	assert.True(t, ttl > 15*time.Minute, "TTL should be at least base TTL")
-	assert.True(t, ttl <= 20*time.Minute, "TTL should be base + max jitter")
+	assert.True(t, ttl >= 15*time.Minute, "TTL should be at least base TTL")
+	assert.True(t, ttl <= 19*time.Minute, "TTL should be base + max jitter (0-4 min)")
 }
 
 func TestDelete_Success(t *testing.T) {
