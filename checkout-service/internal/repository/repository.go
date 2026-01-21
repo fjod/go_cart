@@ -1,15 +1,38 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 )
+
+var (
+	ErrIdempotencyKeyNotFound = errors.New("idempotencyKey not found")
+)
+
+// CheckoutSession represents a checkout session in the database.
+// Maps to the checkout_sessions table.
+type CheckoutSession struct {
+	ID                     string          `db:"id"`
+	UserID                 string          `db:"user_id"`
+	CartSnapshot           json.RawMessage `db:"cart_snapshot"`
+	Status                 string          `db:"status"`
+	IdempotencyKey         string          `db:"idempotency_key"`
+	InventoryReservationID *string         `db:"inventory_reservation_id"`
+	PaymentID              *string         `db:"payment_id"`
+	TotalAmount            string          `db:"total_amount"`
+	Currency               string          `db:"currency"`
+	CreatedAt              time.Time       `db:"created_at"`
+	UpdatedAt              time.Time       `db:"updated_at"`
+}
 
 type Credentials struct {
 	Host              string
@@ -27,6 +50,7 @@ type Repository struct {
 type RepoInterface interface {
 	Close() error
 	RunMigrations(*Credentials) error
+	GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *string, error)
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -54,6 +78,21 @@ func NewRepository(cred *Credentials) (*Repository, error) {
 	db.SetMaxIdleConns(10)
 	fmt.Println("Connected to postgres!")
 	return &Repository{db: db}, nil
+}
+
+func (r *Repository) GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *string, error) {
+	const query = `SELECT id, status FROM checkout_sessions WHERE idempotency_key = $1;`
+
+	var id string
+	var status string
+	err := r.db.QueryRowContext(ctx, query, key).Scan(&id, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrIdempotencyKeyNotFound
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("query checkout session: %w", err)
+	}
+	return &id, &status, nil
 }
 
 func (r *Repository) RunMigrations(cred *Credentials) error {
