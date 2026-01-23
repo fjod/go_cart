@@ -8,19 +8,8 @@ import (
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	"github.com/google/uuid"
 )
-
-type CheckoutService interface {
-	InitiateCheckout(ctx context.Context, request *d.CheckoutRequest) (*d.CheckoutResponse, error)
-}
-
-type CheckoutServiceImpl struct {
-	repo r.RepoInterface
-}
-
-func NewCheckoutService(repo r.RepoInterface) *CheckoutServiceImpl {
-	return &CheckoutServiceImpl{repo: repo}
-}
 
 func (s *CheckoutServiceImpl) InitiateCheckout(
 	ctx context.Context,
@@ -43,6 +32,31 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 		}, nil
 	}
 
-	return &d.CheckoutResponse{ // stub
+	snapshot, snapshotJSON, err2 := s.getCart(ctx, request)
+	if err2 != nil {
+		return nil, err2
+	}
+
+	sessionID := uuid.New().String()
+	session := &r.CheckoutSession{
+		ID:                     sessionID,
+		UserID:                 fmt.Sprintf("%d", request.UserID),
+		CartSnapshot:           snapshotJSON,
+		Status:                 d.CheckoutStatusInitiated,
+		IdempotencyKey:         request.IdempotencyKey,
+		InventoryReservationID: nil,
+		PaymentID:              nil,
+		TotalAmount:            fmt.Sprintf("%.2f", snapshot.TotalAmount),
+		Currency:               snapshot.Currency,
+	}
+
+	if err := s.repo.CreateCheckoutSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("failed to create checkout session: %w", err)
+	}
+
+	newStatus := d.CheckoutStatusInitiated
+	return &d.CheckoutResponse{
+		CheckoutID: &sessionID,
+		Status:     &newStatus,
 	}, nil
 }

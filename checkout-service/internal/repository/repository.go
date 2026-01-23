@@ -52,6 +52,8 @@ type RepoInterface interface {
 	Close() error
 	RunMigrations(*Credentials) error
 	GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *d.CheckoutStatus, error)
+	CreateCheckoutSession(ctx context.Context, session *CheckoutSession) error
+	UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -116,6 +118,36 @@ func (r *Repository) RunMigrations(cred *Credentials) error {
 		return fmt.Errorf("could not run migrations: %w", e2)
 	}
 
+	return nil
+}
+
+func (r *Repository) CreateCheckoutSession(ctx context.Context, s *CheckoutSession) error {
+	query := `INSERT INTO checkout_sessions (id, user_id, cart_snapshot, idempotency_key,  status, total_amount, created_at, updated_at) 
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`
+
+	_, insertErr := r.db.ExecContext(ctx, query,
+		s.ID,                      // id
+		s.UserID,                  // user_id
+		s.CartSnapshot,            // cart_snapshot
+		s.IdempotencyKey,          // idempotency_key
+		d.CheckoutStatusInitiated, // status
+		s.TotalAmount)
+
+	if insertErr != nil {
+		return fmt.Errorf("insert checkout session: %w", insertErr)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error {
+	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW() WHERE id = $2`
+	_, update := r.db.ExecContext(ctx, query,
+		*s,
+		*id)
+
+	if update != nil {
+		return fmt.Errorf("update checkout session: %w", update)
+	}
 	return nil
 }
 

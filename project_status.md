@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 20, 2026
+**Last Updated:** January 23, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -448,7 +448,7 @@ api-gateway/
 
 #### Checkout Service 🔄 In Progress
 
-**Status:** Full database schema with saga state tracking implemented, domain models and gRPC pending
+**Status:** Core domain layer, repository CRUD, and service layer with hybrid pricing implemented and tested
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
@@ -477,12 +477,65 @@ api-gateway/
   - Partial index `idx_outbox_unprocessed` for efficient polling
   - Foreign key constraint linking events to checkout sessions
 - ✅ Down migration for rollback (checkout-service/internal/repository/migrations/001_create_tables.down.sql)
-- ✅ Repository layer with PostgreSQL connection (checkout-service/internal/repository/repository.go)
-  - Credentials struct for connection configuration
-  - NewRepository() with connection pooling (MaxOpenConns: 100, MaxIdleConns: 10)
-  - RunMigrations() using golang-migrate
-  - Close() for resource cleanup
-  - RepoInterface defined for testability
+- ✅ **Domain layer - State Machine** (checkout-service/domain/checkout_status.go)
+  - CheckoutStatus enum with 6 states (INITIATED, INVENTORY_RESERVED, PAYMENT_PENDING, PAYMENT_COMPLETED, COMPLETED, FAILED)
+  - IsTerminal() method for terminal state checking
+  - validTransitions map defining valid state transitions
+  - CanTransitionTo(current, next) function for state validation
+  - Flow: INITIATED → INVENTORY_RESERVED → PAYMENT_PENDING → PAYMENT_COMPLETED → COMPLETED
+  - Any non-terminal state can transition to FAILED
+- ✅ **Repository layer - CRUD Operations** (checkout-service/internal/repository/repository.go)
+  - CheckoutSession struct mapping to database table
+  - GetCheckoutSessionByIdempotencyKey() for duplicate request detection
+  - CreateCheckoutSession() with idempotency key support (always creates with INITIATED status)
+  - UpdateCheckoutSessionStatus() for state transitions
+  - RepoInterface with 5 methods (Close, RunMigrations, Get, Create, Update)
+  - Connection pooling (MaxOpenConns: 100, MaxIdleConns: 10)
+  - ErrIdempotencyKeyNotFound sentinel error
+- ✅ **Repository Tests** (checkout-service/internal/repository/repository_test.go)
+  - setupTestDB() helper using testcontainers with postgres:16-alpine
+  - **7 test functions (3 existing + 4 new):**
+    * TestGetCheckoutSessionByIdempotencyKey_NotFound - validates sentinel error
+    * TestGetCheckoutSessionByIdempotencyKey_Found - validates retrieval with correct status
+    * TestContextCancellation - validates context timeout handling
+    * TestCreateCheckoutSession_Success (NEW) - validates session creation with INITIATED status
+    * TestCreateCheckoutSession_DuplicateIdempotencyKey (NEW) - validates unique constraint
+    * TestUpdateCheckoutSession_Success (NEW) - validates status update
+    * TestUpdateCheckoutSession_StatusProgression (NEW) - validates full state transition flow
+  - **All tests passing (7/7)**
+- ✅ **Service layer - Full Restructure** (checkout-service/internal/service/)
+  - Split into multiple files (Go idiomatic structure):
+    * checkout_service.go - Main InitiateCheckout logic with idempotency handling
+    * checkout_service_definitions.go - CheckoutService interface and CheckoutServiceImpl struct
+    * cart_snapshot.go - Cart fetching, price calculation, and snapshot building
+    * handlers.go - CartHandler and ProductHandler gRPC client wrappers with timeout support
+    * errors.go - Custom errors (ErrEmptyCart)
+  - CheckoutServiceImpl with repository, cart, and product dependencies
+  - InitiateCheckout() implementation:
+    * Idempotency check via GetCheckoutSessionByIdempotencyKey()
+    * Returns existing result if duplicate request detected
+    * Fetches cart from Cart Service with context timeout
+    * Validates cart is not empty (returns ErrEmptyCart)
+    * Builds cart snapshot with hybrid pricing (current prices from Product Service)
+    * Creates checkout session with cart snapshot and total amount
+    * Returns CheckoutResponse with session ID and INITIATED status
+  - Hybrid pricing strategy: fetches current product prices at checkout time
+  - CartSnapshotItem struct: ProductID, ProductName, Quantity, UnitPrice, Subtotal
+  - CartSnapshot struct: Items, TotalAmount, Currency, CapturedAt
+  - buildCartSnapshot() iterates cart items, fetches prices, calculates subtotals
+  - Context timeout support for gRPC calls (5s default)
+- ✅ **Service Tests - Comprehensive Mocks** (checkout-service/internal/service/checkout_service_test.go)
+  - MockRepository implements RepoInterface with session capture
+  - MockCartServiceClient implements cartpb.CartServiceClient (all 5 methods)
+  - MockProductServiceClient implements productpb.ProductServiceClient (GetProducts, GetProduct)
+  - newTestCheckoutService() helper for wiring dependencies
+  - **5 test functions:**
+    * TestInitiateCheckout_NewRequest - validates session creation with correct total (109.97)
+    * TestInitiateCheckout_DuplicateRequest - validates idempotency (returns existing session)
+    * TestInitiateCheckout_RepositoryError - validates error propagation
+    * TestInitiateCheckout_EmptyCart - validates ErrEmptyCart error
+    * TestInitiateCheckout_ProductNotFound - validates product validation
+  - **All tests passing (5/5)**
 - ✅ Main entry point (checkout-service/main.go)
   - Environment variable configuration (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH)
   - Database connection with ping verification
@@ -501,18 +554,15 @@ api-gateway/
   - payment_method VARCHAR(50)
   - completed_at TIMESTAMP
   - *(Note: order_id intentionally omitted - Orders Service owns that relationship)*
-- ⏳ Domain models (CheckoutSession, CheckoutStatus enum)
 - ⏳ Protobuf service definitions
   - InitiateCheckout RPC
   - GetCheckoutStatus RPC
 - ⏳ gRPC handler implementation
-- ⏳ Saga orchestration logic
+- ⏳ Complete saga orchestration logic
   - Reserve inventory → Process payment → Publish event → Complete
   - Compensation logic for failures (release inventory on payment failure)
-- ⏳ gRPC clients for Inventory and Payment services
+- ⏳ gRPC clients for Inventory and Payment services (handlers exist, need wiring)
 - ⏳ Outbox poller (background job to publish events to Kafka)
-- ⏳ Idempotency handling
-- ⏳ Unit tests for repository and handler layers
 - ⏳ Integration tests
 - ⏳ gRPC server setup with graceful shutdown
 
@@ -520,15 +570,31 @@ api-gateway/
 ```
 checkout-service/
 ├── main.go                              ✅ Entry point with migration execution
+├── domain/
+│   ├── checkout_dto.go                  ✅ CheckoutRequest and CheckoutResponse DTOs
+│   └── checkout_status.go               ✅ CheckoutStatus enum + state machine
 ├── internal/
-│   └── repository/
-│       ├── repository.go                ✅ PostgreSQL connection + migrations
-│       └── migrations/
-│           ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
-│           └── 001_create_tables.down.sql ✅ Rollback migration
-├── go.mod                               ✅ Dependencies (lib/pq, golang-migrate)
+│   ├── repository/
+│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods
+│   │   ├── repository_test.go           ✅ Integration tests (7 tests, all passing)
+│   │   └── migrations/
+│   │       ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
+│   │       └── 001_create_tables.down.sql ✅ Rollback migration
+│   └── service/
+│       ├── checkout_service_definitions.go ✅ Interface and struct definitions
+│       ├── checkout_service.go           ✅ InitiateCheckout implementation
+│       ├── cart_snapshot.go              ✅ Cart fetching and hybrid pricing
+│       ├── handlers.go                   ✅ CartHandler and ProductHandler wrappers
+│       ├── errors.go                     ✅ Custom errors (ErrEmptyCart)
+│       └── checkout_service_test.go      ✅ Unit tests (5 tests, all passing)
+├── go.mod                               ✅ Dependencies (lib/pq, golang-migrate, testify)
 └── go.sum                               ✅ Auto-generated
 ```
+
+**Test Summary:**
+- Repository: 7 tests (3 existing + 4 new) - All passing
+- Service: 5 tests - All passing
+- Total: 12 tests, all passing
 
 **How to Run:**
 ```bash
@@ -1123,7 +1189,7 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- 🔄 **Checkout Service: ~25%** (Full schema with saga state columns, idempotency, indexes; domain models + gRPC pending)
+- 🔄 **Checkout Service: ~60%** (State machine, repository CRUD, service layer with hybrid pricing, 12 tests passing; gRPC + saga orchestration pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
@@ -1136,11 +1202,61 @@ curl http://localhost:8080/health
 - Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
 **Phase 2 Progress:**
-- **Checkout Service ~25% complete (Full schema with saga columns + idempotency + indexes; domain models, gRPC endpoints, outbox poller pending)**
+- **Checkout Service ~60% complete (State machine, repository CRUD, service layer with hybrid pricing, 12 tests passing; gRPC + saga orchestration pending)**
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 
-**Recent Progress (January 20, 2026):**
+**Recent Progress (January 23, 2026):**
+
+**Session 11 - Checkout Service Core Implementation:**
+- ✅ **Domain Layer - State Machine** (checkout-service/domain/checkout_status.go)
+  - Added CheckoutStatus enum with 6 states
+  - Implemented validTransitions map defining valid state transitions
+  - Created CanTransitionTo(current, next) function for state validation
+  - Flow: INITIATED → INVENTORY_RESERVED → PAYMENT_PENDING → PAYMENT_COMPLETED → COMPLETED
+  - Any non-terminal state can transition to FAILED
+  - IsTerminal() method for terminal state checking
+- ✅ **Repository Layer - CRUD Operations** (checkout-service/internal/repository/repository.go)
+  - Added CreateCheckoutSession() with idempotency key support
+  - Added UpdateCheckoutSessionStatus() for status transitions
+  - Updated RepoInterface with new methods (now 5 methods total)
+  - Session creation always starts with INITIATED status
+  - Added 4 new repository tests (all passing with testcontainers PostgreSQL):
+    * TestCreateCheckoutSession_Success - validates session creation
+    * TestCreateCheckoutSession_DuplicateIdempotencyKey - validates unique constraint
+    * TestUpdateCheckoutSession_Success - validates status updates
+    * TestUpdateCheckoutSession_StatusProgression - validates full state machine flow
+- ✅ **Service Layer - Full Restructure** (checkout-service/internal/service/)
+  - Split into multiple files (Go idiomatic structure):
+    * checkout_service.go - Main InitiateCheckout logic
+    * checkout_service_definitions.go - Interface and struct definitions
+    * cart_snapshot.go - Cart fetching and price calculation
+    * handlers.go - CartHandler and ProductHandler gRPC client wrappers
+    * errors.go - Custom errors (ErrEmptyCart)
+  - Implemented hybrid pricing: fetches current prices from Product Service at checkout
+  - Creates cart snapshot with prices for audit/order history
+  - CartSnapshotItem includes: ProductID, ProductName, Quantity, UnitPrice, Subtotal
+  - CartSnapshot includes: Items array, TotalAmount, Currency, CapturedAt timestamp
+  - Context timeout support for gRPC calls (5s default)
+  - Idempotency handling: checks for duplicate requests before processing
+- ✅ **Service Tests - Comprehensive Mocks** (checkout-service/internal/service/checkout_service_test.go)
+  - Added MockCartServiceClient (implements cartpb.CartServiceClient)
+  - Added MockProductServiceClient (implements productpb.ProductServiceClient)
+  - Updated MockRepository with CreateCheckoutSession capture
+  - 5 test functions covering:
+    * TestInitiateCheckout_NewRequest - new checkout with price calculation
+    * TestInitiateCheckout_DuplicateRequest - idempotency check returns existing session
+    * TestInitiateCheckout_RepositoryError - error propagation
+    * TestInitiateCheckout_EmptyCart - validates ErrEmptyCart error
+    * TestInitiateCheckout_ProductNotFound - product validation
+  - **All tests passing (5/5)**
+- ✅ **Test Summary:**
+  - Repository: 7 tests (3 existing + 4 new)
+  - Service: 5 tests
+  - Total: 12 tests, all passing
+- **Checkout Service progress: ~25% → ~60%**
+
+**Previous Progress (January 20, 2026):**
 
 **Session 10 - Checkout Service Infrastructure:**
 - ✅ **Scaffolded Checkout Service database layer** (Phase 2 saga orchestrator)

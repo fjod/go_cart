@@ -115,3 +115,121 @@ func TestContextCancellation(t *testing.T) {
 	_, _, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "any-key")
 	assert.Error(t, err)
 }
+
+func TestCreateCheckoutSession_Success(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{"items":[{"product_id":1,"quantity":2}]}`),
+		IdempotencyKey: "idem-key-123",
+		TotalAmount:    "99.99",
+	}
+
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Verify the session was created with correct status
+	id, status, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "idem-key-123")
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, *id)
+	assert.Equal(t, d.CheckoutStatusInitiated, *status) // Always starts as INITIATED
+}
+
+func TestCreateCheckoutSession_DuplicateIdempotencyKey(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	session := &CheckoutSession{
+		ID:             uuid.New().String(),
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "duplicate-key",
+		TotalAmount:    "50.00",
+	}
+
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Try to create another session with the same idempotency key
+	session2 := &CheckoutSession{
+		ID:             uuid.New().String(),
+		UserID:         "user-456",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "duplicate-key", // Same key
+		TotalAmount:    "75.00",
+	}
+
+	err = repo.CreateCheckoutSession(ctx, session2)
+	assert.Error(t, err) // Should fail due to unique constraint
+}
+
+func TestUpdateCheckoutSession_Success(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+
+	// First create a session
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Update the status
+	newStatus := d.CheckoutStatusPaymentCompleted
+	err = repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &newStatus)
+	require.NoError(t, err)
+
+	// Verify the status was updated
+	_, status, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "update-test-key")
+	require.NoError(t, err)
+	assert.Equal(t, d.CheckoutStatusPaymentCompleted, *status)
+}
+
+func TestUpdateCheckoutSession_StatusProgression(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+
+	// Create initial session (starts as INITIATED)
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-789",
+		CartSnapshot:   []byte(`{"items":[]}`),
+		IdempotencyKey: "progression-key",
+		TotalAmount:    "200.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Progress through status transitions
+	statusProgression := []d.CheckoutStatus{
+		d.CheckoutStatusInventoryReserved,
+		d.CheckoutStatusPaymentPending,
+		d.CheckoutStatusPaymentCompleted,
+		d.CheckoutStatusCompleted,
+	}
+
+	for _, expectedStatus := range statusProgression {
+		err = repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &expectedStatus)
+		require.NoError(t, err)
+
+		_, actualStatus, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "progression-key")
+		require.NoError(t, err)
+		assert.Equal(t, expectedStatus, *actualStatus)
+	}
+}
