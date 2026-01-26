@@ -54,6 +54,7 @@ type RepoInterface interface {
 	GetCheckoutSessionByIdempotencyKey(ctx context.Context, key string) (*string, *d.CheckoutStatus, error)
 	CreateCheckoutSession(ctx context.Context, session *CheckoutSession) error
 	UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error
+	SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -147,6 +148,19 @@ func (r *Repository) UpdateCheckoutSessionStatus(ctx context.Context, id *string
 
 	if update != nil {
 		return fmt.Errorf("update checkout session: %w", update)
+	}
+	return nil
+}
+
+func (r *Repository) SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error {
+	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW(), inventory_reservation_id = $2 WHERE id = $3`
+	_, update := r.db.ExecContext(ctx, query,
+		*s,
+		*reserveId,
+		*id)
+
+	if update != nil {
+		return fmt.Errorf("set reservation checkout session: %w", update)
 	}
 	return nil
 }

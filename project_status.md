@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 23, 2026
+**Last Updated:** January 26, 2026
 **Current Phase:** Phase 1 - Foundation (In Progress)
 
 ---
@@ -448,7 +448,7 @@ api-gateway/
 
 #### Checkout Service 🔄 In Progress
 
-**Status:** Core domain layer, repository CRUD, and service layer with hybrid pricing implemented and tested
+**Status:** Core domain layer, repository CRUD, service layer with hybrid pricing, and **inventory reservation (Saga Step 2)** implemented and tested
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
@@ -524,18 +524,32 @@ api-gateway/
   - CartSnapshot struct: Items, TotalAmount, Currency, CapturedAt
   - buildCartSnapshot() iterates cart items, fetches prices, calculates subtotals
   - Context timeout support for gRPC calls (5s default)
-- ✅ **Service Tests - Comprehensive Mocks** (checkout-service/internal/service/checkout_service_test.go)
-  - MockRepository implements RepoInterface with session capture
-  - MockCartServiceClient implements cartpb.CartServiceClient (all 5 methods)
-  - MockProductServiceClient implements productpb.ProductServiceClient (GetProducts, GetProduct)
-  - newTestCheckoutService() helper for wiring dependencies
-  - **5 test functions:**
+- ✅ **Saga Step 2: Inventory Reservation** (checkout-service/internal/service/checkout_reserve_inventory.go)
+  - reserveInventory() method with state machine validation (CanTransitionTo)
+  - Calls InventoryService.Reserve() via gRPC with timeout context
+  - Updates session with reservation_id and INVENTORY_RESERVED status
+  - **Compensation logic:** marks session as FAILED on reservation failure
+  - Returns both response and error on failure (client gets checkout_id for retry tracking)
+- ✅ **InventoryHandler gRPC client wrapper** (checkout-service/internal/service/handlers.go)
+  - Wraps inventorypb.InventoryServiceClient with configurable timeout
+  - Consistent with CartHandler and ProductHandler patterns
+- ✅ **Repository SetReservation method** (checkout-service/internal/repository/repository.go)
+  - Atomically updates status and inventory_reservation_id
+  - TestReserveItem_Success test validates the update
+- ✅ **Service Tests - Comprehensive Mocks** (split into mocks_test.go + checkout_service_test.go)
+  - **mocks_test.go:** MockRepository, MockCartServiceClient, MockProductServiceClient, MockInventoryServiceClient
+  - **checkout_service_test.go:** Actual test cases
+  - MockInventoryServiceClient implements all 4 inventory methods (GetStock, Reserve, Confirm, Release)
+  - newTestCheckoutService() helper for wiring all dependencies
+  - **7 test functions:**
     * TestInitiateCheckout_NewRequest - validates session creation with correct total (109.97)
+    * TestInitiateCheckout_ReserveFailed - validates FAILED status on reservation error
     * TestInitiateCheckout_DuplicateRequest - validates idempotency (returns existing session)
     * TestInitiateCheckout_RepositoryError - validates error propagation
     * TestInitiateCheckout_EmptyCart - validates ErrEmptyCart error
     * TestInitiateCheckout_ProductNotFound - validates product validation
-  - **All tests passing (5/5)**
+    * TestReserveInventory - validates reservation flow and DB update
+  - **All tests passing (7/7)**
 - ✅ Main entry point (checkout-service/main.go)
   - Environment variable configuration (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH)
   - Database connection with ping verification
@@ -558,10 +572,13 @@ api-gateway/
   - InitiateCheckout RPC
   - GetCheckoutStatus RPC
 - ⏳ gRPC handler implementation
-- ⏳ Complete saga orchestration logic
-  - Reserve inventory → Process payment → Publish event → Complete
-  - Compensation logic for failures (release inventory on payment failure)
-- ⏳ gRPC clients for Inventory and Payment services (handlers exist, need wiring)
+- ⏳ **Saga Step 3: Payment Processing**
+  - Call PaymentService.Charge() via gRPC
+  - On failure: call InventoryService.Release() to compensate, mark FAILED
+  - On success: update session with payment_id
+- ⏳ **Saga Step 4: Outbox Event + Complete**
+  - Atomic transaction: insert outbox_events + update status to COMPLETED
+- ⏳ gRPC client for Payment service (InventoryHandler done, PaymentHandler pending)
 - ⏳ Outbox poller (background job to publish events to Kafka)
 - ⏳ Integration tests
 - ⏳ gRPC server setup with graceful shutdown
@@ -575,26 +592,28 @@ checkout-service/
 │   └── checkout_status.go               ✅ CheckoutStatus enum + state machine
 ├── internal/
 │   ├── repository/
-│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods
-│   │   ├── repository_test.go           ✅ Integration tests (7 tests, all passing)
+│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods + SetReservation
+│   │   ├── repository_test.go           ✅ Integration tests (8 tests, all passing)
 │   │   └── migrations/
 │   │       ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
 │   │       └── 001_create_tables.down.sql ✅ Rollback migration
 │   └── service/
 │       ├── checkout_service_definitions.go ✅ Interface and struct definitions
-│       ├── checkout_service.go           ✅ InitiateCheckout implementation
+│       ├── checkout_service.go           ✅ InitiateCheckout with inventory reservation
+│       ├── checkout_reserve_inventory.go ✅ reserveInventory() + compensation logic
 │       ├── cart_snapshot.go              ✅ Cart fetching and hybrid pricing
-│       ├── handlers.go                   ✅ CartHandler and ProductHandler wrappers
-│       ├── errors.go                     ✅ Custom errors (ErrEmptyCart)
-│       └── checkout_service_test.go      ✅ Unit tests (5 tests, all passing)
+│       ├── handlers.go                   ✅ CartHandler, ProductHandler, InventoryHandler
+│       ├── errors.go                     ✅ Custom errors (ErrEmptyCart, IllegalTransitionError)
+│       ├── mocks_test.go                 ✅ Mock implementations (repo, cart, product, inventory)
+│       └── checkout_service_test.go      ✅ Unit tests (7 tests, all passing)
 ├── go.mod                               ✅ Dependencies (lib/pq, golang-migrate, testify)
 └── go.sum                               ✅ Auto-generated
 ```
 
 **Test Summary:**
-- Repository: 7 tests (3 existing + 4 new) - All passing
-- Service: 5 tests - All passing
-- Total: 12 tests, all passing
+- Repository: 8 tests (7 existing + 1 SetReservation) - All passing
+- Service: 7 tests (5 existing + 2 reservation tests) - All passing
+- Total: 15 tests, all passing
 
 **How to Run:**
 ```bash
@@ -1189,7 +1208,7 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- 🔄 **Checkout Service: ~60%** (State machine, repository CRUD, service layer with hybrid pricing, 12 tests passing; gRPC + saga orchestration pending)
+- 🔄 **Checkout Service: ~70%** (State machine, repository CRUD, service layer with hybrid pricing, inventory reservation (Saga Step 2) with compensation, 15 tests passing; payment processing + outbox pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
@@ -1202,11 +1221,50 @@ curl http://localhost:8080/health
 - Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
 **Phase 2 Progress:**
-- **Checkout Service ~60% complete (State machine, repository CRUD, service layer with hybrid pricing, 12 tests passing; gRPC + saga orchestration pending)**
+- **Checkout Service ~70% complete (State machine, repository CRUD, service layer with hybrid pricing, inventory reservation with compensation, 15 tests passing; payment + outbox pending)**
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 
-**Recent Progress (January 23, 2026):**
+**Recent Progress (January 26, 2026):**
+
+**Session 12 - Checkout Service Inventory Reservation (Saga Step 2):**
+- ✅ **Implemented Saga Step 2: Reserve Inventory** (checkout-service/internal/service/checkout_reserve_inventory.go)
+  - Created reserveInventory() method with state machine validation
+  - Calls InventoryService.Reserve() via gRPC with configurable timeout
+  - Updates checkout session with reservation_id and INVENTORY_RESERVED status
+  - State transition validation using CanTransitionTo() from domain layer
+- ✅ **Added compensation logic for reservation failures**
+  - On failure: marks session as FAILED via UpdateCheckoutSessionStatus()
+  - Returns both CheckoutResponse and error (client gets checkout_id for retry tracking)
+  - Follows saga pattern: compensate before returning error
+- ✅ **Created InventoryHandler gRPC client wrapper** (checkout-service/internal/service/handlers.go)
+  - Wraps inventorypb.InventoryServiceClient with configurable timeout
+  - Fixed naming: uses `inventoryClient` (not `productClient`)
+  - Consistent pattern with CartHandler and ProductHandler
+- ✅ **Added SetReservation repository method** (checkout-service/internal/repository/repository.go)
+  - Atomically updates status + inventory_reservation_id in single UPDATE
+  - Added to RepoInterface (now 5 methods)
+  - TestReserveItem_Success validates the update
+- ✅ **Split test file for maintainability**
+  - Created mocks_test.go with all mock implementations
+  - Kept checkout_service_test.go with actual test cases
+  - MockInventoryServiceClient implements all 4 inventory methods
+- ✅ **Added new tests:**
+  - TestInitiateCheckout_ReserveFailed - validates FAILED status on reservation error
+  - TestReserveInventory - validates reservation flow and DB update
+  - TestReserveItem_Success (repository) - validates SetReservation method
+- ✅ **Code review issues addressed:**
+  - Fixed return status (was returning INITIATED, now returns COMPLETED as stub)
+  - Added timeout context to reserveInventory() gRPC call
+  - Fixed InventoryHandler.productClient → inventoryClient naming
+  - Removed UTF-8 BOM from checkout_reserve_inventory.go
+- **Test counts:**
+  - Repository: 8 tests (was 7, added TestReserveItem_Success)
+  - Service: 7 tests (was 5, added TestReserveFailed + TestReserveInventory)
+  - Total: 15 tests, all passing
+- **Checkout Service progress: ~60% → ~70%**
+
+**Previous Progress (January 23, 2026):**
 
 **Session 11 - Checkout Service Core Implementation:**
 - ✅ **Domain Layer - State Machine** (checkout-service/domain/checkout_status.go)

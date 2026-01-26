@@ -54,9 +54,32 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 		return nil, fmt.Errorf("failed to create checkout session: %w", err)
 	}
 
-	newStatus := d.CheckoutStatusInitiated
+	reserveStatus := d.CheckoutStatusInitiated
+	items := mapItemsToItemPointers(snapshot.Items)
+	reserveError := s.reserveInventory(ctx, sessionID, items, reserveStatus)
+	if reserveError != nil {
+		failedStatus := d.CheckoutStatusFailed
+		err := s.repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &failedStatus)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set failed status: %w", err)
+		}
+		return &d.CheckoutResponse{
+			CheckoutID: &sessionID,
+			Status:     &failedStatus,
+		}, fmt.Errorf("failed to reserve inventory: %w", reserveError)
+	}
+
+	returnStatus := d.CheckoutStatusCompleted // stub status until all steps of saga are implemented
 	return &d.CheckoutResponse{
 		CheckoutID: &sessionID,
-		Status:     &newStatus,
+		Status:     &returnStatus,
 	}, nil
+}
+
+func mapItemsToItemPointers(input []CartSnapshotItem) []*CartSnapshotItem {
+	result := make([]*CartSnapshotItem, len(input))
+	for i, item := range input {
+		result[i] = &item
+	}
+	return result
 }
