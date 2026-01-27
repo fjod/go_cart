@@ -3,6 +3,7 @@ module github.com/fjod/go_cart/payment-service
 go 1.25
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11

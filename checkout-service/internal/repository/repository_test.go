@@ -234,6 +234,42 @@ func TestReserveItem_Success(t *testing.T) {
 	assert.Equal(t, "reserve", inventoryReservationID)
 }
 
+func TestProcessPayment_Success(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+
+	// First create a session
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Update the status
+	newStatus := d.CheckoutStatusPaymentCompleted
+	payId := "paid"
+	err = repo.SetPayment(ctx, &sessionID, &newStatus, &payId)
+	require.NoError(t, err)
+
+	// Verify the status was updated
+	_, status, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "update-test-key")
+	require.NoError(t, err)
+	assert.Equal(t, d.CheckoutStatusPaymentCompleted, *status)
+
+	reserveQuery := `select payment_id from checkout_sessions where id = $1`
+	ret := repo.db.QueryRow(reserveQuery, sessionID)
+	var paymentId string
+	require.NoError(t, ret.Scan(&paymentId))
+	assert.Equal(t, "paid", paymentId)
+}
+
 func TestUpdateCheckoutSession_StatusProgression(t *testing.T) {
 	repo, cleanup := setupTestDB(t)
 	defer cleanup()

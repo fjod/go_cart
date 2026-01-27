@@ -9,6 +9,7 @@ import (
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
 	ipb "github.com/fjod/go_cart/inventory-service/pkg/proto"
+	paymentpb "github.com/fjod/go_cart/payment-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,8 +48,13 @@ func TestInitiateCheckout_NewRequest(t *testing.T) {
 		reserveResponse: reserveResponse,
 		err:             nil,
 	}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status: paymentpb.ChargeStatus_CHARGE_STATUS_SUCCESS,
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -65,6 +71,70 @@ func TestInitiateCheckout_NewRequest(t *testing.T) {
 	// Verify cart snapshot was created with correct total
 	assert.NotNil(t, mockRepo.CreatedSession)
 	assert.Equal(t, "109.97", mockRepo.CreatedSession.TotalAmount) // (29.99*2) + (49.99*1)
+
+	assert.Equal(t, "109.97", mockPay.PaymentAmount)
+}
+
+func TestInitiateCheckout_ReleaseInventory(t *testing.T) {
+	mockRepo := &MockRepository{
+		GetKey:    nil,
+		GetStatus: nil,
+		GetErr:    r.ErrIdempotencyKeyNotFound,
+	}
+
+	mockCart := &MockCartServiceClient{
+		CartResponse: &cartpb.CartResponse{
+			Cart: &cartpb.Cart{
+				Cart: []*cartpb.CartItem{
+					{ProductId: 1, Quantity: 2},
+					{ProductId: 2, Quantity: 1},
+				},
+			},
+		},
+	}
+
+	mockProduct := &MockProductServiceClient{
+		Products: map[int64]*productpb.Product{
+			1: {Id: 1, Name: "Widget", Price: 29.99},
+			2: {Id: 2, Name: "Gadget", Price: 49.99},
+		},
+	}
+
+	reserveResponse := &ipb.ReserveResponse{
+		ReservationId: "reserveId-1122",
+		ExpiresAt:     "",
+	}
+	mockInventory := &MockInventoryServiceClient{
+		reserveResponse: reserveResponse,
+		err:             nil,
+	}
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status:  paymentpb.ChargeStatus_CHARGE_STATUS_FAILED,
+			Refusal: &paymentpb.ChargeResponse_KnownReason{KnownReason: paymentpb.PaymentRefusal_NO_FUNDS},
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
+
+	req := &d.CheckoutRequest{
+		UserID:         123,
+		IdempotencyKey: "new-key-12345",
+	}
+
+	resp, err := svc.InitiateCheckout(context.Background(), req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "FAILED")
+	assert.NotNil(t, resp)
+	assert.NotNil(t, resp.CheckoutID)
+	assert.Equal(t, d.CheckoutStatusFailed, *resp.Status)
+
+	// Verify cart snapshot was created with correct total
+	assert.NotNil(t, mockRepo.CreatedSession)
+	assert.Equal(t, "109.97", mockRepo.CreatedSession.TotalAmount) // (29.99*2) + (49.99*1)
+	assert.Equal(t, "109.97", mockPay.PaymentAmount)
+	assert.Equal(t, "reserveId-1122", mockInventory.ReleaseId) // we called inventory release for reservationId
 }
 
 func TestInitiateCheckout_ReserveFailed(t *testing.T) {
@@ -101,7 +171,8 @@ func TestInitiateCheckout_ReserveFailed(t *testing.T) {
 		err:             errors.New("insufficient stock"),
 	}
 
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -134,8 +205,8 @@ func TestInitiateCheckout_DuplicateRequest(t *testing.T) {
 	mockCart := &MockCartServiceClient{}
 	mockProduct := &MockProductServiceClient{}
 	mockInventory := &MockInventoryServiceClient{}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -161,8 +232,8 @@ func TestInitiateCheckout_RepositoryError(t *testing.T) {
 	mockCart := &MockCartServiceClient{}
 	mockProduct := &MockProductServiceClient{}
 	mockInventory := &MockInventoryServiceClient{}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -193,8 +264,8 @@ func TestInitiateCheckout_EmptyCart(t *testing.T) {
 
 	mockProduct := &MockProductServiceClient{}
 	mockInventory := &MockInventoryServiceClient{}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -229,8 +300,8 @@ func TestInitiateCheckout_ProductNotFound(t *testing.T) {
 		Products: map[int64]*productpb.Product{}, // Empty - no products
 	}
 	mockInventory := &MockInventoryServiceClient{}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 
 	req := &d.CheckoutRequest{
 		UserID:         123,
@@ -256,8 +327,13 @@ func TestReserveInventory(t *testing.T) {
 		reserveResponse: reserveResponse,
 		err:             nil,
 	}
-
-	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory)
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status: paymentpb.ChargeStatus_CHARGE_STATUS_SUCCESS,
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 	ctx := context.Background()
 	items := make([]*CartSnapshotItem, 2)
 	items[0] = &CartSnapshotItem{
@@ -268,7 +344,65 @@ func TestReserveInventory(t *testing.T) {
 		ProductID: 2,
 		Quantity:  2,
 	}
-	e := svc.reserveInventory(ctx, "checkoutId", items, d.CheckoutStatusInitiated)
+	id, e := svc.reserveInventory(ctx, "checkoutId", items, d.CheckoutStatusInitiated)
 	require.NoError(t, e)
 	assert.Equal(t, reserveResponse.ReservationId, *mockRepo.ReservationId)
+	assert.Equal(t, reserveResponse.ReservationId, *id)
+}
+
+func TestPayment_NoError(t *testing.T) {
+	mockRepo := &MockRepository{}
+	mockCart := &MockCartServiceClient{}
+	mockProduct := &MockProductServiceClient{}
+	mockInventory := &MockInventoryServiceClient{}
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status:    paymentpb.ChargeStatus_CHARGE_STATUS_SUCCESS,
+			PaymentId: "payId",
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
+	e := svc.processPayment(context.Background(), "checkoutId", d.CheckoutStatusInventoryReserved, "1234.56")
+	require.NoError(t, e)
+	assert.Equal(t, "payId", *mockRepo.PaymentId)
+	assert.Equal(t, "1234.56", mockPay.PaymentAmount)
+}
+
+func TestPayment_KnownError(t *testing.T) {
+	mockRepo := &MockRepository{}
+	mockCart := &MockCartServiceClient{}
+	mockProduct := &MockProductServiceClient{}
+	mockInventory := &MockInventoryServiceClient{}
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status:  paymentpb.ChargeStatus_CHARGE_STATUS_FAILED,
+			Refusal: &paymentpb.ChargeResponse_KnownReason{KnownReason: paymentpb.PaymentRefusal_NO_FUNDS},
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
+	err := svc.processPayment(context.Background(), "checkoutId", d.CheckoutStatusInventoryReserved, "1234.56")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "NO_FUNDS")
+	assert.Equal(t, "1234.56", mockPay.PaymentAmount)
+}
+
+func TestPayment_OtherError(t *testing.T) {
+	mockRepo := &MockRepository{}
+	mockCart := &MockCartServiceClient{}
+	mockProduct := &MockProductServiceClient{}
+	mockInventory := &MockInventoryServiceClient{}
+	mockPay := &MockPaymentServiceClient{
+		err: nil,
+		cr: &paymentpb.ChargeResponse{
+			Status:  paymentpb.ChargeStatus_CHARGE_STATUS_FAILED,
+			Refusal: &paymentpb.ChargeResponse_OtherReason{OtherReason: "other failure"},
+		},
+	}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
+	err := svc.processPayment(context.Background(), "checkoutId", d.CheckoutStatusInventoryReserved, "1234.56")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "other failure")
+	assert.Equal(t, "1234.56", mockPay.PaymentAmount)
 }

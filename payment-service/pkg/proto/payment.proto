@@ -26,11 +26,12 @@ message ChargeResponse {
     string other_reason = 4;  // free-form when enum doesn't fit
   }
   string checkout_id = 5;
-  string reservation_id = 6;
+  string payment_id = 6;
 }
 
 message ChargeRequest{
   string checkout_id = 1;
+  string amount = 2;
 }
 
 message RefundRequest{

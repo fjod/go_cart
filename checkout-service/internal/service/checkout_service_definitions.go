@@ -16,13 +16,21 @@ type CheckoutServiceImpl struct {
 	cart      *CartHandler
 	product   *ProductHandler
 	inventory *InventoryHandler
+	payment   *PaymentHandler
 }
 
-func NewCheckoutService(repo r.RepoInterface, cart *CartHandler, product *ProductHandler, inventory *InventoryHandler) *CheckoutServiceImpl {
+func NewCheckoutService(
+	repo r.RepoInterface,
+	cart *CartHandler,
+	product *ProductHandler,
+	inventory *InventoryHandler,
+	payment *PaymentHandler,
+) *CheckoutServiceImpl {
 	return &CheckoutServiceImpl{
 		repo:      repo,
 		cart:      cart,
 		product:   product,
 		inventory: inventory,
+		payment:   payment,
 	}
 }

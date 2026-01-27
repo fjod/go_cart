@@ -135,7 +135,7 @@ type ChargeResponse struct {
 	//	*ChargeResponse_OtherReason
 	Refusal       isChargeResponse_Refusal `protobuf_oneof:"refusal"`
 	CheckoutId    string                   `protobuf:"bytes,5,opt,name=checkout_id,json=checkoutId,proto3" json:"checkout_id,omitempty"`
-	ReservationId string                   `protobuf:"bytes,6,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	PaymentId     string                   `protobuf:"bytes,6,opt,name=payment_id,json=paymentId,proto3" json:"payment_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -216,9 +216,9 @@ func (x *ChargeResponse) GetCheckoutId() string {
 	return ""
 }
 
-func (x *ChargeResponse) GetReservationId() string {
+func (x *ChargeResponse) GetPaymentId() string {
 	if x != nil {
-		return x.ReservationId
+		return x.PaymentId
 	}
 	return ""
 }
@@ -242,6 +242,7 @@ func (*ChargeResponse_OtherReason) isChargeResponse_Refusal() {}
 type ChargeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CheckoutId    string                 `protobuf:"bytes,1,opt,name=checkout_id,json=checkoutId,proto3" json:"checkout_id,omitempty"`
+	Amount        string                 `protobuf:"bytes,2,opt,name=amount,proto3" json:"amount,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -279,6 +280,13 @@ func (*ChargeRequest) Descriptor() ([]byte, []int) {
 func (x *ChargeRequest) GetCheckoutId() string {
 	if x != nil {
 		return x.CheckoutId
+	}
+	return ""
+}
+
+func (x *ChargeRequest) GetAmount() string {
+	if x != nil {
+		return x.Amount
 	}
 	return ""
 }
@@ -367,19 +375,21 @@ var File_pkg_proto_payment_proto protoreflect.FileDescriptor
 
 const file_pkg_proto_payment_proto_rawDesc = "" +
 	"\n" +
-	"\x17pkg/proto/payment.proto\x12\apayment\"\x9c\x02\n" +
+	"\x17pkg/proto/payment.proto\x12\apayment\"\x94\x02\n" +
 	"\x0eChargeResponse\x12-\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x15.payment.ChargeStatusR\x06status\x12%\n" +
 	"\x0etransaction_id\x18\x02 \x01(\tR\rtransactionId\x12<\n" +
 	"\fknown_reason\x18\x03 \x01(\x0e2\x17.payment.PaymentRefusalH\x00R\vknownReason\x12#\n" +
 	"\fother_reason\x18\x04 \x01(\tH\x00R\votherReason\x12\x1f\n" +
 	"\vcheckout_id\x18\x05 \x01(\tR\n" +
-	"checkoutId\x12%\n" +
-	"\x0ereservation_id\x18\x06 \x01(\tR\rreservationIdB\t\n" +
-	"\arefusal\"0\n" +
+	"checkoutId\x12\x1d\n" +
+	"\n" +
+	"payment_id\x18\x06 \x01(\tR\tpaymentIdB\t\n" +
+	"\arefusal\"H\n" +
 	"\rChargeRequest\x12\x1f\n" +
 	"\vcheckout_id\x18\x01 \x01(\tR\n" +
-	"checkoutId\"0\n" +
+	"checkoutId\x12\x16\n" +
+	"\x06amount\x18\x02 \x01(\tR\x06amount\"0\n" +
 	"\rRefundRequest\x12\x1f\n" +
 	"\vcheckout_id\x18\x01 \x01(\tR\n" +
 	"checkoutId\"\x10\n" +

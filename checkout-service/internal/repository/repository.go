@@ -55,6 +55,7 @@ type RepoInterface interface {
 	CreateCheckoutSession(ctx context.Context, session *CheckoutSession) error
 	UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error
 	SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error
+	SetPayment(ctx context.Context, id *string, s *d.CheckoutStatus, payId *string) error
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -142,25 +143,59 @@ func (r *Repository) CreateCheckoutSession(ctx context.Context, s *CheckoutSessi
 
 func (r *Repository) UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error {
 	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW() WHERE id = $2`
-	_, update := r.db.ExecContext(ctx, query,
+	result, update := r.db.ExecContext(ctx, query,
 		*s,
 		*id)
 
 	if update != nil {
 		return fmt.Errorf("update checkout session: %w", update)
 	}
+	rows, e := result.RowsAffected()
+	if e != nil {
+		return fmt.Errorf("checking rows affected: %w", e)
+	}
+	if rows == 0 {
+		return fmt.Errorf("checkout session not found: %s", *id)
+	}
 	return nil
 }
 
 func (r *Repository) SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error {
 	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW(), inventory_reservation_id = $2 WHERE id = $3`
-	_, update := r.db.ExecContext(ctx, query,
+	result, update := r.db.ExecContext(ctx, query,
 		*s,
 		*reserveId,
 		*id)
 
 	if update != nil {
-		return fmt.Errorf("set reservation checkout session: %w", update)
+		return fmt.Errorf("update checkout session: %w", update)
+	}
+	rows, e := result.RowsAffected()
+	if e != nil {
+		return fmt.Errorf("checking rows affected: %w", e)
+	}
+	if rows == 0 {
+		return fmt.Errorf("checkout session not found: %s", *id)
+	}
+	return nil
+}
+
+func (r *Repository) SetPayment(ctx context.Context, id *string, s *d.CheckoutStatus, payId *string) error {
+	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW(), payment_id = $2 WHERE id = $3`
+	result, update := r.db.ExecContext(ctx, query,
+		*s,
+		*payId,
+		*id)
+
+	if update != nil {
+		return fmt.Errorf("update checkout session: %w", update)
+	}
+	rows, e := result.RowsAffected()
+	if e != nil {
+		return fmt.Errorf("checking rows affected: %w", e)
+	}
+	if rows == 0 {
+		return fmt.Errorf("checkout session not found: %s", *id)
 	}
 	return nil
 }

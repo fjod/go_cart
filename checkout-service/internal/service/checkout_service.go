@@ -56,7 +56,7 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 
 	reserveStatus := d.CheckoutStatusInitiated
 	items := mapItemsToItemPointers(snapshot.Items)
-	reserveError := s.reserveInventory(ctx, sessionID, items, reserveStatus)
+	reserveId, reserveError := s.reserveInventory(ctx, sessionID, items, reserveStatus)
 	if reserveError != nil {
 		failedStatus := d.CheckoutStatusFailed
 		err := s.repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &failedStatus)
@@ -67,6 +67,27 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 			CheckoutID: &sessionID,
 			Status:     &failedStatus,
 		}, fmt.Errorf("failed to reserve inventory: %w", reserveError)
+	}
+
+	reservedStatus := d.CheckoutStatusInventoryReserved
+	payError := s.processPayment(ctx, sessionID, reservedStatus, session.TotalAmount)
+	if payError != nil {
+		failedStatus := d.CheckoutStatusFailed
+		err := s.repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &failedStatus)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set failed status: %w", err)
+		}
+
+		// compensate inventory reservation on payment failure
+		releaseError := s.releaseInventory(ctx, *reserveId)
+		if releaseError != nil {
+			return nil, fmt.Errorf("failed to release inventory: %w", releaseError)
+		}
+
+		return &d.CheckoutResponse{
+			CheckoutID: &sessionID,
+			Status:     &failedStatus,
+		}, fmt.Errorf("failed to pay: %v", failedStatus)
 	}
 
 	returnStatus := d.CheckoutStatusCompleted // stub status until all steps of saga are implemented

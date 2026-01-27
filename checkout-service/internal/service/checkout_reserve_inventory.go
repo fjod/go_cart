@@ -7,9 +7,9 @@ import (
 	inventorypb "github.com/fjod/go_cart/inventory-service/pkg/proto"
 )
 
-func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId string, items []*CartSnapshotItem, status d.CheckoutStatus) error {
+func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId string, items []*CartSnapshotItem, status d.CheckoutStatus) (*string, error) {
 	if !d.CanTransitionTo(status, d.CheckoutStatusInventoryReserved) {
-		return IllegalTransitionError
+		return nil, IllegalTransitionError
 	}
 	reqItems := mapItems(items)
 	request := inventorypb.ReserveRequest{
@@ -21,14 +21,14 @@ func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId s
 	defer cancel()
 	result, e := s.inventory.inventoryClient.Reserve(inventoryCtx, &request)
 	if e != nil {
-		return e
+		return nil, e
 	}
 	newStatus := d.CheckoutStatusInventoryReserved
 	dbError := s.repo.SetReservation(ctx, &checkoutId, &newStatus, &result.ReservationId)
 	if dbError != nil {
-		return dbError
+		return nil, dbError
 	}
-	return nil
+	return &result.ReservationId, nil
 }
 
 func mapItems(items []*CartSnapshotItem) []*inventorypb.ReservationItem {

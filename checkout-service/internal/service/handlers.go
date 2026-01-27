@@ -5,6 +5,7 @@ import (
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	inventorypb "github.com/fjod/go_cart/inventory-service/pkg/proto"
+	paymentpb "github.com/fjod/go_cart/payment-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 )
 
@@ -41,5 +42,17 @@ func NewInventoryHandler(inventoryClient inventorypb.InventoryServiceClient, tim
 	return &InventoryHandler{
 		inventoryClient: inventoryClient,
 		timeout:         timeout,
+	}
+}
+
+type PaymentHandler struct {
+	paymentClient paymentpb.PaymentServiceClient
+	timeout       time.Duration
+}
+
+func NewPaymentHandler(paymentClient paymentpb.PaymentServiceClient, timeout time.Duration) *PaymentHandler {
+	return &PaymentHandler{
+		paymentClient: paymentClient,
+		timeout:       timeout,
 	}
 }
