@@ -56,6 +56,7 @@ type RepoInterface interface {
 	UpdateCheckoutSessionStatus(ctx context.Context, id *string, s *d.CheckoutStatus) error
 	SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error
 	SetPayment(ctx context.Context, id *string, s *d.CheckoutStatus, payId *string) error
+	CompleteCheckoutSession(ctx context.Context, id *string, snapshot []byte, s *d.CheckoutStatus) error
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -202,4 +203,46 @@ func (r *Repository) SetPayment(ctx context.Context, id *string, s *d.CheckoutSt
 
 func (r *Repository) Close() error {
 	return r.db.Close()
+}
+
+func (r *Repository) CompleteCheckoutSession(ctx context.Context, id *string, snapshot []byte, s *d.CheckoutStatus) error {
+	txOpts := sql.TxOptions{Isolation: sql.LevelReadCommitted}
+	tx, txe := r.db.BeginTx(ctx, &txOpts)
+	if txe != nil {
+		return fmt.Errorf("failed to start transaction: %w", txe)
+	}
+	defer tx.Rollback()
+	query := `UPDATE checkout_sessions SET status = $1, updated_at = NOW() WHERE id = $2`
+	result, update := tx.ExecContext(ctx, query,
+		*s,
+		*id)
+	if update != nil {
+		return fmt.Errorf("complete checkout session: %w", update)
+	}
+	rows, e := result.RowsAffected()
+	if e != nil {
+		return fmt.Errorf("complete rows affected: %w", e)
+	}
+	if rows == 0 {
+		return fmt.Errorf("complete session not found: %s", *id)
+	}
+
+	query = `INSERT INTO outbox_events (aggregate_id, event_type, payload, created_at) 
+               VALUES ($1, $2, $3, NOW())`
+
+	result, update = tx.ExecContext(
+		ctx,
+		query,
+		*id,
+		"CheckoutCompleted",
+		snapshot)
+
+	if update != nil {
+		return fmt.Errorf("complete checkout session on insert: %w", update)
+	}
+	err := tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
 }

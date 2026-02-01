@@ -31,7 +31,7 @@ COMMENT ON COLUMN checkout_sessions.payment_id IS 'Payment transaction ID from P
 
 CREATE TABLE outbox_events (
                                id BIGSERIAL PRIMARY KEY,
-                               aggregate_id UUID NOT NULL,
+                               aggregate_id UUID NOT NULL, -- checkout id
                                event_type VARCHAR(100) NOT NULL,
                                payload JSONB NOT NULL,
                                created_at TIMESTAMP NOT NULL DEFAULT NOW(),

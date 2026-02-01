@@ -23,6 +23,7 @@ type MockRepository struct {
 	CreatedSession *r.CheckoutSession // Captures the session passed to CreateCheckoutSession
 	ReservationId  *string
 	PaymentId      *string
+	OutboxId       *string
 }
 
 func (m *MockRepository) Close() error {
@@ -53,6 +54,11 @@ func (m *MockRepository) SetReservation(_ context.Context, _ *string, _ *d.Check
 
 func (m *MockRepository) SetPayment(_ context.Context, _ *string, _ *d.CheckoutStatus, payId *string) error {
 	m.PaymentId = payId
+	return nil
+}
+
+func (m *MockRepository) CompleteCheckoutSession(_ context.Context, id *string, _ []byte, _ *d.CheckoutStatus) error {
+	m.OutboxId = id
 	return nil
 }
 

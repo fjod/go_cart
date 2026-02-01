@@ -1,7 +1,7 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** January 27, 2026
-**Current Phase:** Phase 1 - Foundation (In Progress)
+**Last Updated:** February 1, 2026
+**Current Phase:** Phase 2 - Checkout Orchestration (In Progress)
 
 ---
 
@@ -448,7 +448,7 @@ api-gateway/
 
 #### Checkout Service 🔄 In Progress
 
-**Status:** Core domain layer, repository CRUD, service layer with hybrid pricing, inventory reservation (Saga Step 2), and **payment processing (Saga Step 3)** with full compensation flow implemented and tested
+**Status:** Saga Steps 1-4 complete - Checkout saga functionally complete with transactional outbox pattern implemented and tested. Remaining: outbox poller, gRPC server setup, and integration tests.
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
@@ -470,9 +470,9 @@ api-gateway/
   - SQL COMMENT statements documenting table and columns
 - ✅ outbox_events table for Transactional Outbox Pattern (checkout-service/internal/repository/migrations/001_create_tables.up.sql:18-39)
   - id BIGSERIAL PRIMARY KEY (auto-incrementing for ordering)
-  - aggregate_id UUID NOT NULL (FK to checkout_sessions)
+  - aggregate_id UUID NOT NULL (FK to checkout_sessions) -- inline comment: checkout id
   - event_type VARCHAR(100) NOT NULL
-  - payload JSONB NOT NULL (cart snapshot)
+  - payload JSONB NOT NULL (enriched event data for Kafka consumers)
   - created_at TIMESTAMP, processed_at TIMESTAMP (NULL while pending)
   - Partial index `idx_outbox_unprocessed` for efficient polling
   - Foreign key constraint linking events to checkout sessions
@@ -538,10 +538,27 @@ api-gateway/
   - On success: updates session with payment_id and PAYMENT_COMPLETED status via SetPayment()
   - On failure: returns error with known/other refusal reason
   - convertError() helper handles both oneof branches (known_reason, other_reason)
+- ✅ **Saga Step 4: Outbox Event + Complete Checkout** (checkout-service/internal/service/checkout_complete.go)
+  - complete() method with state machine validation (CanTransitionTo COMPLETED)
+  - Builds enriched event payload with checkout_id, user_id, items, total_amount, currency, completed_at
+  - Marshals payload to JSON for outbox event storage
+  - Calls CompleteCheckoutSession() repository method for atomic transaction
+  - Repository atomically (single PostgreSQL transaction) updates checkout_sessions status to COMPLETED and inserts CheckoutCompleted event into outbox_events table
+  - Uses defer tx.Rollback() pattern with sql.LevelReadCommitted isolation
+  - On failure: full saga compensation (refund payment → mark FAILED → release inventory → return error)
 - ✅ **Saga Compensation: Inventory Release** (checkout-service/internal/service/checkout_release_inventory.go)
   - releaseInventory() method calls InventoryService.Release() via gRPC with timeout context
   - Used as compensation when payment fails (saga compensation pattern)
   - Integrated into InitiateCheckout: on payment failure → marks session FAILED → releases inventory reservation → returns error
+  - Also used when complete() fails: refund payment → mark FAILED → release inventory
+- ✅ **Orchestrator update** (checkout-service/internal/service/checkout_service.go)
+  - InitiateCheckout now calls complete() after successful payment
+  - Full saga flow: Create Session → Reserve Inventory → Process Payment → Complete (Outbox + Status Update)
+  - On complete() failure: full compensation chain
+    * Refund payment via PaymentService.Refund()
+    * Mark session as FAILED
+    * Release inventory reservation
+    * Return error with checkout_id for retry tracking
 - ✅ **gRPC Client Handlers** (checkout-service/internal/service/handlers.go)
   - InventoryHandler wraps inventorypb.InventoryServiceClient with configurable timeout
   - PaymentHandler wraps paymentpb.PaymentServiceClient with configurable timeout
@@ -549,19 +566,20 @@ api-gateway/
 - ✅ **Repository Methods** (checkout-service/internal/repository/repository.go)
   - SetReservation() atomically updates status + inventory_reservation_id in single UPDATE
   - SetPayment() atomically updates status + payment_id in single UPDATE
+  - CompleteCheckoutSession() atomically updates status to COMPLETED and inserts outbox event (single transaction)
   - UpdateCheckoutSessionStatus(), SetReservation(), SetPayment() now include RowsAffected() checks
   - Returns error if checkout session not found (0 rows affected)
   - Proper error ordering: check ExecContext error first, then RowsAffected
-  - RepoInterface now has 6 methods (Close, RunMigrations, Get, Create, UpdateStatus, SetReservation, SetPayment)
-  - TestReserveItem_Success and TestProcessPayment_Success tests validate the methods
+  - RepoInterface now has 8 methods (Close, RunMigrations, Get, Create, UpdateStatus, SetReservation, SetPayment, CompleteCheckoutSession)
+  - TestReserveItem_Success, TestProcessPayment_Success, and TestCompleteCheckout_Success tests validate the methods
 - ✅ **Service Tests - Comprehensive Mocks** (split into mocks_test.go + checkout_service_test.go)
   - **mocks_test.go:** MockRepository, MockCartServiceClient, MockProductServiceClient, MockInventoryServiceClient, MockPaymentServiceClient
   - **checkout_service_test.go:** Actual test cases
   - MockInventoryServiceClient implements all 4 inventory methods (GetStock, Reserve, Confirm, Release) with ReleaseId capture
   - MockPaymentServiceClient implements Charge and Refund with configurable success/failure scenarios
   - newTestCheckoutService() helper for wiring all dependencies (now includes payment client)
-  - **11 test functions:**
-    * TestInitiateCheckout_NewRequest - validates session creation with correct total (109.97)
+  - **12 test functions:**
+    * TestInitiateCheckout_NewRequest - validates full happy path (snapshot → reserve → pay → outbox event)
     * TestInitiateCheckout_ReserveFailed - validates FAILED status on reservation error
     * TestInitiateCheckout_ReleaseInventory - validates full compensation flow (payment fails → inventory released)
     * TestInitiateCheckout_DuplicateRequest - validates idempotency (returns existing session)
@@ -572,7 +590,8 @@ api-gateway/
     * TestPayment_NoError - validates successful payment processing
     * TestPayment_KnownError - validates known refusal reason (NO_FUNDS)
     * TestPayment_OtherError - validates other refusal reason
-  - **All tests passing (11/11)**
+    * TestCompleteCheckout - validates complete flow with outbox event creation
+  - **All tests passing (12/12)**
 - ✅ Main entry point (checkout-service/main.go)
   - Environment variable configuration (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH)
   - Database connection with ping verification
@@ -595,8 +614,6 @@ api-gateway/
   - InitiateCheckout RPC
   - GetCheckoutStatus RPC
 - ⏳ gRPC handler implementation
-- ⏳ **Saga Step 4: Outbox Event + Complete**
-  - Atomic transaction: insert outbox_events + update status to COMPLETED
 - ⏳ Outbox poller (background job to publish events to Kafka)
 - ⏳ Integration tests
 - ⏳ gRPC server setup with graceful shutdown
@@ -610,30 +627,31 @@ checkout-service/
 │   └── checkout_status.go               ✅ CheckoutStatus enum + state machine
 ├── internal/
 │   ├── repository/
-│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods + SetReservation + SetPayment
-│   │   ├── repository_test.go           ✅ Integration tests (9 tests, all passing)
+│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods + SetReservation + SetPayment + CompleteCheckoutSession
+│   │   ├── repository_test.go           ✅ Integration tests (10 tests, all passing)
 │   │   └── migrations/
 │   │       ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
 │   │       └── 001_create_tables.down.sql ✅ Rollback migration
 │   └── service/
 │       ├── checkout_service_definitions.go ✅ Interface and struct definitions
-│       ├── checkout_service.go           ✅ InitiateCheckout with reservation + payment + compensation
+│       ├── checkout_service.go           ✅ InitiateCheckout with full saga flow + compensation
 │       ├── checkout_reserve_inventory.go ✅ reserveInventory() method (returns *string, error)
 │       ├── checkout_payment.go           ✅ processPayment() method + convertError() helper
+│       ├── checkout_complete.go          ✅ complete() method - outbox event + status update
 │       ├── checkout_release_inventory.go ✅ releaseInventory() compensation method
 │       ├── cart_snapshot.go              ✅ Cart fetching and hybrid pricing
 │       ├── handlers.go                   ✅ CartHandler, ProductHandler, InventoryHandler, PaymentHandler
 │       ├── errors.go                     ✅ Custom errors (ErrEmptyCart, IllegalTransitionError)
 │       ├── mocks_test.go                 ✅ Mock implementations (repo, cart, product, inventory, payment)
-│       └── checkout_service_test.go      ✅ Unit tests (11 tests, all passing)
+│       └── checkout_service_test.go      ✅ Unit tests (12 tests, all passing)
 ├── go.mod                               ✅ Dependencies (lib/pq, golang-migrate, testify)
 └── go.sum                               ✅ Auto-generated
 ```
 
 **Test Summary:**
-- Repository: 9 tests (8 existing + 1 SetPayment) - All passing
-- Service: 11 tests (7 existing + 4 payment tests) - All passing
-- Total: 20 tests, all passing
+- Repository: 10 tests (9 existing + 1 TestCompleteCheckout_Success) - All passing
+- Service: 12 tests (11 existing + 1 TestCompleteCheckout) - All passing
+- Total: 22 tests, all passing
 
 **How to Run:**
 ```bash
@@ -1230,7 +1248,7 @@ curl http://localhost:8080/health
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- 🔄 **Checkout Service: ~80%** (State machine, repository CRUD, service layer with hybrid pricing, inventory reservation (Saga Step 2), payment processing (Saga Step 3) with full compensation, 20 tests passing; outbox + gRPC server pending)
+- 🔄 **Checkout Service: ~90%** (Saga Steps 1-4 complete, transactional outbox pattern implemented, 22 tests passing; outbox poller + gRPC server pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
@@ -1243,11 +1261,53 @@ curl http://localhost:8080/health
 - Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
 **Phase 2 Progress:**
-- **Checkout Service ~80% complete (Saga Steps 1-3 complete: Create Session, Reserve Inventory, Process Payment; full compensation flow; 20 tests passing; outbox + gRPC server pending)**
+- **Checkout Service ~90% complete (Saga Steps 1-4 complete: Create Session, Reserve Inventory, Process Payment, Complete Checkout; transactional outbox pattern; 22 tests passing; outbox poller + gRPC server pending)**
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 
-**Recent Progress (January 27, 2026):**
+**Recent Progress (February 1, 2026):**
+
+**Session 14 - Checkout Service Saga Step 4: Outbox Event + Complete Checkout:**
+- ✅ **Implemented Saga Step 4: Complete Checkout with Transactional Outbox** (checkout-service/internal/service/checkout_complete.go)
+  - Created complete() method with state machine validation (CanTransitionTo COMPLETED)
+  - Builds enriched event payload with checkout_id, user_id, items, total_amount, currency, completed_at timestamp
+  - Marshals payload to JSON for outbox event storage
+  - Calls repository's CompleteCheckoutSession() for atomic transaction
+- ✅ **Repository: CompleteCheckoutSession() atomic transaction** (checkout-service/internal/repository/repository.go)
+  - New method atomically updates checkout_sessions status to COMPLETED and inserts CheckoutCompleted event into outbox_events table
+  - Single PostgreSQL transaction using defer tx.Rollback() pattern with sql.LevelReadCommitted isolation
+  - Updates checkout_sessions: SET status = COMPLETED, updated_at = NOW()
+  - Inserts into outbox_events: aggregate_id (checkout id), event_type ("CheckoutCompleted"), payload (enriched JSON), created_at
+  - Returns error on transaction failure with proper error wrapping
+- ✅ **Orchestrator update** (checkout-service/internal/service/checkout_service.go)
+  - InitiateCheckout now calls complete() after successful payment
+  - Full saga flow now complete: Create Session → Reserve Inventory → Process Payment → Complete (Outbox + Status Update)
+  - On complete() failure: implements full compensation chain
+    * Refunds payment via PaymentService.Refund()
+    * Marks session as FAILED
+    * Releases inventory reservation
+    * Returns error with checkout_id for retry tracking
+- ✅ **Tests added:**
+  - TestCompleteCheckout_Success (repository) - integration test with testcontainers PostgreSQL verifying both status update and outbox event insertion
+  - Validates outbox event payload content matches cart snapshot
+  - TestCompleteCheckout (service) - unit test verifying complete flow with mocks
+  - TestInitiateCheckout_NewRequest enriched - now verifies full happy path: snapshot → reserve → pay → outbox
+  - MockRepository updated with OutboxId field for test verification
+- ✅ **RepoInterface updated** - now has 8 methods (added CompleteCheckoutSession)
+- ✅ **Migration enhancement** - added inline comment to outbox_events.aggregate_id clarifying it's the checkout id
+- ✅ **Test counts:**
+  - Repository: 10 tests (9 existing + 1 new TestCompleteCheckout_Success) - All passing
+  - Service: 12 tests (11 existing + 1 new TestCompleteCheckout) - All passing
+  - Total: 22 tests, all passing
+- **Key details:**
+  - Event type: "CheckoutCompleted" (matching the high-level plan)
+  - Transactional Outbox Pattern correctly implemented (atomic UPDATE + INSERT in single transaction)
+  - Full saga compensation chain: Reserve → Pay → Complete, with reverse compensation at each failure point
+  - Checkout service saga is now functionally complete (Steps 1-4)
+  - Remaining work: outbox poller (background job to publish events to Kafka), gRPC server setup, integration tests
+- **Checkout Service progress: ~80% → ~90%**
+
+**Previous Progress (January 27, 2026):**
 
 **Session 13 - Checkout Service Payment Processing (Saga Step 3):**
 - ✅ **Implemented Saga Step 3: Payment Processing** (checkout-service/internal/service/checkout_payment.go)

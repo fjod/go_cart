@@ -305,3 +305,48 @@ func TestUpdateCheckoutSession_StatusProgression(t *testing.T) {
 		assert.Equal(t, expectedStatus, *actualStatus)
 	}
 }
+
+func TestCompleteCheckout_Success(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+	// First create a session
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{"items": []}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	// Update the status
+	newStatus := d.CheckoutStatusCompleted
+	byteSnapshot, _ := session.CartSnapshot.MarshalJSON()
+	err = repo.CompleteCheckoutSession(ctx, &sessionID, byteSnapshot, &newStatus)
+	require.NoError(t, err)
+
+	// Verify the status was updated
+	_, status, err := repo.GetCheckoutSessionByIdempotencyKey(ctx, "update-test-key")
+	require.NoError(t, err)
+	assert.Equal(t, d.CheckoutStatusCompleted, *status)
+
+	eventIdQuery := `select id from outbox_events where aggregate_id = $1`
+	ret := repo.db.QueryRow(eventIdQuery, sessionID)
+	var eventId int64
+	require.NoError(t, ret.Err())
+	require.NoError(t, ret.Scan(&eventId))
+	assert.NotEqual(t, 0, eventId)
+	t.Logf("received eventId = %v", eventId)
+
+	snapshotQuery := `select payload from outbox_events where aggregate_id = $1`
+	snap := repo.db.QueryRow(snapshotQuery, sessionID)
+	var snapShotBytes []byte
+	require.NoError(t, snap.Err())
+	err = snap.Scan(&snapShotBytes)
+	assert.Equal(t, `{"items": []}`, string(snapShotBytes))
+	t.Logf("received cart snapshot = %v", string(snapShotBytes))
+}

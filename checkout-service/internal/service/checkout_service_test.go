@@ -70,9 +70,10 @@ func TestInitiateCheckout_NewRequest(t *testing.T) {
 
 	// Verify cart snapshot was created with correct total
 	assert.NotNil(t, mockRepo.CreatedSession)
-	assert.Equal(t, "109.97", mockRepo.CreatedSession.TotalAmount) // (29.99*2) + (49.99*1)
-
-	assert.Equal(t, "109.97", mockPay.PaymentAmount)
+	assert.Equal(t, "109.97", mockRepo.CreatedSession.TotalAmount)          // (29.99*2) + (49.99*1) snapshot sum is fine
+	assert.Equal(t, reserveResponse.ReservationId, *mockRepo.ReservationId) // reserved
+	assert.Equal(t, "109.97", mockPay.PaymentAmount)                        // paid
+	assert.Equal(t, resp.CheckoutID, mockRepo.OutboxId)                     // saved to outbox
 }
 
 func TestInitiateCheckout_ReleaseInventory(t *testing.T) {
@@ -405,4 +406,19 @@ func TestPayment_OtherError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "other failure")
 	assert.Equal(t, "1234.56", mockPay.PaymentAmount)
+}
+
+func TestCompleteCheckout(t *testing.T) {
+	mockRepo := &MockRepository{}
+	mockCart := &MockCartServiceClient{}
+	mockProduct := &MockProductServiceClient{}
+	mockInventory := &MockInventoryServiceClient{}
+	mockPay := &MockPaymentServiceClient{}
+	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
+	ctx := context.Background()
+
+	snapshot := &CartSnapshot{}
+	e := svc.complete(ctx, "checkoutId", d.CheckoutStatusPaymentCompleted, snapshot, "user")
+	require.NoError(t, e)
+	assert.Equal(t, "checkoutId", *mockRepo.OutboxId)
 }

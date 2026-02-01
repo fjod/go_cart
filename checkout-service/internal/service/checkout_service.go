@@ -8,6 +8,7 @@ import (
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	paymentpb "github.com/fjod/go_cart/payment-service/pkg/proto"
 	"github.com/google/uuid"
 )
 
@@ -90,7 +91,33 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 		}, fmt.Errorf("failed to pay: %v", failedStatus)
 	}
 
-	returnStatus := d.CheckoutStatusCompleted // stub status until all steps of saga are implemented
+	paidStatus := d.CheckoutStatusPaymentCompleted
+	completeCheckoutError := s.complete(ctx, sessionID, paidStatus, snapshot, fmt.Sprintf("%d", request.UserID))
+	if completeCheckoutError != nil {
+		refundRequest := &paymentpb.RefundRequest{CheckoutId: sessionID}
+		_, refundErr := s.payment.paymentClient.Refund(ctx, refundRequest)
+		if refundErr != nil {
+			return nil, fmt.Errorf("failed to refund after failed checkout: %w", refundErr)
+		}
+		failedStatus := d.CheckoutStatusFailed
+		err := s.repo.UpdateCheckoutSessionStatus(ctx, &sessionID, &failedStatus)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set failed status: %w", err)
+		}
+
+		// compensate inventory reservation on complete checkout failure
+		releaseError := s.releaseInventory(ctx, *reserveId)
+		if releaseError != nil {
+			return nil, fmt.Errorf("failed to release inventory: %w", releaseError)
+		}
+
+		return &d.CheckoutResponse{
+			CheckoutID: &sessionID,
+			Status:     &failedStatus,
+		}, fmt.Errorf("failed to complete checkout: %v", failedStatus)
+	}
+
+	returnStatus := d.CheckoutStatusCompleted
 	return &d.CheckoutResponse{
 		CheckoutID: &sessionID,
 		Status:     &returnStatus,
