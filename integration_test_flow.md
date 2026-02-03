@@ -43,6 +43,41 @@ This document describes the complete integration test flow for the e-commerce pl
    - Inventory Service initializes with stock for all products
    - User ID: 1 (provided by MockAuthMiddleware)
 
+4. **PostgreSQL MCP Server (For Agent Automation):**
+   - MCP server connection is available for automated database verification
+   - Sub-agents can use MCP tools to verify checkout_sessions and outbox_events tables
+   - All verification queries are documented in each test phase below
+   - Database: PostgreSQL on localhost:5432, schema: public
+
+---
+
+## Agent Automation Guidelines
+
+When using the integration-flow-validator agent or similar sub-agents, follow this verification pattern:
+
+1. **Execute API request** (curl command from test phase)
+2. **Validate HTTP response** (status code, JSON structure, expected values)
+3. **Verify database state** (use MCP tools to query PostgreSQL)
+4. **Check event propagation** (verify outbox_events table for async operations)
+
+**Example Verification Flow:**
+```
+Step 1: POST /api/v1/checkout
+  → Capture checkout_id from response
+
+Step 2: Verify checkout_sessions table
+  → mcp__postgres-mcp__execute_sql(
+      sql: "SELECT status FROM checkout_sessions WHERE id = '<checkout_id>'"
+    )
+  → Assert: status = 'COMPLETED' or 'FAILED'
+
+Step 3: Verify outbox_events table
+  → mcp__postgres-mcp__execute_sql(
+      sql: "SELECT event_type FROM outbox_events WHERE aggregate_id = '<checkout_id>'"
+    )
+  → Assert: event_type matches expected event
+```
+
 ---
 
 ## Test Flow Sequence
@@ -455,6 +490,35 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 3. Checkout Session: Status = COMPLETED in PostgreSQL
 4. Outbox Events: Event written to outbox_events table
 
+**MCP Database Verification (For Agent):**
+```
+# Verify checkout session exists and has correct status
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, user_id, status, total_amount, idempotency_key
+        FROM checkout_sessions
+        WHERE id = '<checkout_id>'"
+)
+
+# Expected result:
+# - status = 'COMPLETED'
+# - user_id = 1
+# - total_amount = 2599.98 (2x Laptop)
+# - idempotency_key = 'test-checkout-001'
+
+# Verify outbox event was created
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT event_type, aggregate_id, processed_at
+        FROM outbox_events
+        WHERE aggregate_id = '<checkout_id>'
+        ORDER BY created_at DESC LIMIT 1"
+)
+
+# Expected result:
+# - event_type = 'checkout.completed'
+# - aggregate_id = checkout_id from response
+# - processed_at should be NOT NULL (event published)
+```
+
 ---
 
 #### Test 5.2: Verify Cart Cleared After Checkout
@@ -600,6 +664,29 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 2. Checkout Session: Status = FAILED in PostgreSQL
 3. Cart: NOT cleared (remains intact)
 
+**MCP Database Verification (For Agent):**
+```
+# Verify checkout session failed correctly
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, status, total_amount, failure_reason
+        FROM checkout_sessions
+        WHERE id = '<checkout_id>'"
+)
+
+# Expected result:
+# - status = 'FAILED'
+# - failure_reason should contain payment error details
+
+# Verify compensation event exists (optional, if implemented)
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT event_type, aggregate_id
+        FROM outbox_events
+        WHERE aggregate_id = '<checkout_id>'
+        AND event_type LIKE '%failed%'
+        ORDER BY created_at DESC LIMIT 1"
+)
+```
+
 ---
 
 ### Phase 8: Cart Cleanup
@@ -629,413 +716,40 @@ curl -X DELETE http://localhost:8080/api/v1/cart
 - Cart completely cleared
 - Cache invalidated
 
----
 
-## Full End-to-End Test Script
-
-### Bash Script (Linux/Mac)
-
-```bash
-#!/bin/bash
-
-API_URL="http://localhost:8080"
-
-echo "=== E-Commerce Integration Test ==="
-echo
-
-# Test 1: Health Check
-echo "1. Health Check"
-curl -s -X GET $API_URL/health | jq '.'
-echo
-
-# Test 2: List Products
-echo "2. List Products"
-PRODUCTS=$(curl -s -X GET $API_URL/api/v1/products)
-echo $PRODUCTS | jq '.'
-PRODUCT_COUNT=$(echo $PRODUCTS | jq '.products | length')
-echo "Product count: $PRODUCT_COUNT (expected: 5)"
-echo
-
-# Test 3: Get Empty Cart
-echo "3. Get Empty Cart"
-curl -s -X GET $API_URL/api/v1/cart | jq '.'
-echo
-
-# Test 4: Add Laptop to Cart
-echo "4. Add 2x Laptop"
-curl -s -X POST $API_URL/api/v1/cart/items \
-  -H "Content-Type: application/json" \
-  -d '{"product_id": 1, "quantity": 2}' | jq '.'
-echo
-
-# Test 5: Add Mouse to Cart
-echo "5. Add 1x Mouse"
-curl -s -X POST $API_URL/api/v1/cart/items \
-  -H "Content-Type: application/json" \
-  -d '{"product_id": 2, "quantity": 1}' | jq '.'
-echo
-
-# Test 6: Update Mouse Quantity
-echo "6. Update Mouse to 3x"
-curl -s -X PUT $API_URL/api/v1/cart/items/2 \
-  -H "Content-Type: application/json" \
-  -d '{"quantity": 3}' | jq '.'
-echo
-
-# Test 7: Get Cart (verify cache)
-echo "7. Get Cart (cache test)"
-curl -s -X GET $API_URL/api/v1/cart | jq '.'
-echo
-
-# Test 8: Remove Mouse
-echo "8. Remove Mouse from Cart"
-curl -s -X DELETE $API_URL/api/v1/cart/items/2 | jq '.'
-echo
-
-# Test 9: Checkout
-echo "9. Initiate Checkout"
-CHECKOUT_RESPONSE=$(curl -s -X POST $API_URL/api/v1/checkout \
-  -H "Content-Type: application/json" \
-  -d '{"idempotency_key": "integration-test-'$(date +%s)'"}')
-echo $CHECKOUT_RESPONSE | jq '.'
-CHECKOUT_ID=$(echo $CHECKOUT_RESPONSE | jq -r '.checkout_id')
-CHECKOUT_STATUS=$(echo $CHECKOUT_RESPONSE | jq -r '.status')
-echo "Checkout ID: $CHECKOUT_ID"
-echo "Status: $CHECKOUT_STATUS"
-echo
-
-# Test 10: Verify Cart Cleared (wait for async processing)
-echo "10. Verify Cart Cleared (waiting 2s for Kafka event)"
-sleep 2
-curl -s -X GET $API_URL/api/v1/cart | jq '.'
-echo
-
-# Test 11: Idempotent Retry
-echo "11. Test Idempotency (retry same checkout)"
-curl -s -X POST $API_URL/api/v1/checkout \
-  -H "Content-Type: application/json" \
-  -d '{"idempotency_key": "integration-test-'$(date +%s)'"}' | jq '.'
-echo
-
-# Test 12: Error - Empty Cart Checkout
-echo "12. Test Empty Cart Error"
-curl -s -X POST $API_URL/api/v1/checkout \
-  -H "Content-Type: application/json" \
-  -d '{"idempotency_key": "error-test-'$(date +%s)'"}' | jq '.'
-echo
-
-# Test 13: Error - Invalid Product
-echo "13. Test Invalid Product Error"
-curl -s -X POST $API_URL/api/v1/cart/items \
-  -H "Content-Type: application/json" \
-  -d '{"product_id": 999, "quantity": 1}' | jq '.'
-echo
-
-# Test 14: Clear Cart
-echo "14. Clear Cart"
-curl -s -X DELETE $API_URL/api/v1/cart | jq '.'
-echo
-
-echo "=== Integration Test Complete ==="
-```
-
-### PowerShell Script (Windows)
-
-```powershell
-# integration-test.ps1
-
-$API_URL = "http://localhost:8080"
-
-Write-Host "=== E-Commerce Integration Test ===" -ForegroundColor Cyan
-Write-Host
-
-# Test 1: Health Check
-Write-Host "1. Health Check" -ForegroundColor Yellow
-$response = Invoke-RestMethod -Uri "$API_URL/health" -Method Get
-$response | ConvertTo-Json
-Write-Host
-
-# Test 2: List Products
-Write-Host "2. List Products" -ForegroundColor Yellow
-$products = Invoke-RestMethod -Uri "$API_URL/api/v1/products" -Method Get
-$products | ConvertTo-Json -Depth 5
-Write-Host "Product count: $($products.products.Count) (expected: 5)"
-Write-Host
-
-# Test 3: Get Empty Cart
-Write-Host "3. Get Empty Cart" -ForegroundColor Yellow
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart" -Method Get
-$cart | ConvertTo-Json
-Write-Host
-
-# Test 4: Add Laptop
-Write-Host "4. Add 2x Laptop" -ForegroundColor Yellow
-$body = @{ product_id = 1; quantity = 2 } | ConvertTo-Json
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart/items" -Method Post -Body $body -ContentType "application/json"
-$cart | ConvertTo-Json -Depth 5
-Write-Host
-
-# Test 5: Add Mouse
-Write-Host "5. Add 1x Mouse" -ForegroundColor Yellow
-$body = @{ product_id = 2; quantity = 1 } | ConvertTo-Json
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart/items" -Method Post -Body $body -ContentType "application/json"
-$cart | ConvertTo-Json -Depth 5
-Write-Host
-
-# Test 6: Update Mouse Quantity
-Write-Host "6. Update Mouse to 3x" -ForegroundColor Yellow
-$body = @{ quantity = 3 } | ConvertTo-Json
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart/items/2" -Method Put -Body $body -ContentType "application/json"
-$cart | ConvertTo-Json -Depth 5
-Write-Host
-
-# Test 7: Get Cart
-Write-Host "7. Get Cart (cache test)" -ForegroundColor Yellow
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart" -Method Get
-$cart | ConvertTo-Json -Depth 5
-Write-Host
-
-# Test 8: Remove Mouse
-Write-Host "8. Remove Mouse from Cart" -ForegroundColor Yellow
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart/items/2" -Method Delete
-$cart | ConvertTo-Json -Depth 5
-Write-Host
-
-# Test 9: Checkout
-Write-Host "9. Initiate Checkout" -ForegroundColor Yellow
-$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$body = @{ idempotency_key = "integration-test-$timestamp" } | ConvertTo-Json
-try {
-    $checkout = Invoke-RestMethod -Uri "$API_URL/api/v1/checkout" -Method Post -Body $body -ContentType "application/json"
-    $checkout | ConvertTo-Json
-    Write-Host "Checkout ID: $($checkout.checkout_id)" -ForegroundColor Green
-    Write-Host "Status: $($checkout.status)" -ForegroundColor Green
-} catch {
-    Write-Host "Checkout Error: $_" -ForegroundColor Red
-}
-Write-Host
-
-# Test 10: Verify Cart Cleared
-Write-Host "10. Verify Cart Cleared (waiting 2s)" -ForegroundColor Yellow
-Start-Sleep -Seconds 2
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart" -Method Get
-$cart | ConvertTo-Json
-Write-Host
-
-# Test 11: Error - Empty Cart Checkout
-Write-Host "11. Test Empty Cart Error" -ForegroundColor Yellow
-$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$body = @{ idempotency_key = "error-test-$timestamp" } | ConvertTo-Json
-try {
-    $result = Invoke-RestMethod -Uri "$API_URL/api/v1/checkout" -Method Post -Body $body -ContentType "application/json"
-    $result | ConvertTo-Json
-} catch {
-    Write-Host "Expected Error: $_" -ForegroundColor Magenta
-}
-Write-Host
-
-# Test 12: Clear Cart
-Write-Host "12. Clear Cart" -ForegroundColor Yellow
-$cart = Invoke-RestMethod -Uri "$API_URL/api/v1/cart" -Method Delete
-$cart | ConvertTo-Json
-Write-Host
-
-Write-Host "=== Integration Test Complete ===" -ForegroundColor Cyan
-```
-
----
-
-## Automated Testing Tools
-
-### Option 1: Postman Collection
-Create a Postman collection with:
-- Environment variables: `base_url = http://localhost:8080`
-- Pre-request scripts for generating unique idempotency keys
-- Test assertions in each request
-- Collection runner for sequential execution
-
-### Option 2: Go Integration Test Suite
-
-```go
-// tests/integration/api_test.go
-package integration_test
-
-import (
-    "bytes"
-    "encoding/json"
-    "net/http"
-    "testing"
-    "time"
-
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
-)
-
-const baseURL = "http://localhost:8080"
-
-func TestFullCheckoutFlow(t *testing.T) {
-    client := &http.Client{Timeout: 10 * time.Second}
-
-    // Test 1: Health Check
-    t.Run("HealthCheck", func(t *testing.T) {
-        resp, err := client.Get(baseURL + "/health")
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var result map[string]string
-        json.NewDecoder(resp.Body).Decode(&result)
-        assert.Equal(t, "ok", result["status"])
-    })
-
-    // Test 2: List Products
-    t.Run("ListProducts", func(t *testing.T) {
-        resp, err := client.Get(baseURL + "/api/v1/products")
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var result struct {
-            Products []map[string]interface{} `json:"products"`
-        }
-        json.NewDecoder(resp.Body).Decode(&result)
-        assert.Equal(t, 5, len(result.Products))
-    })
-
-    // Test 3: Add Item to Cart
-    var cartID string
-    t.Run("AddItemToCart", func(t *testing.T) {
-        body := map[string]interface{}{
-            "product_id": 1,
-            "quantity":   2,
-        }
-        jsonBody, _ := json.Marshal(body)
-
-        resp, err := client.Post(
-            baseURL+"/api/v1/cart/items",
-            "application/json",
-            bytes.NewBuffer(jsonBody),
-        )
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var result map[string]interface{}
-        json.NewDecoder(resp.Body).Decode(&result)
-        cartID = result["cart_id"].(string)
-        assert.NotEmpty(t, cartID)
-        assert.Equal(t, float64(2599.98), result["total_price"])
-    })
-
-    // Test 4: Checkout
-    var checkoutID string
-    t.Run("Checkout", func(t *testing.T) {
-        body := map[string]interface{}{
-            "idempotency_key": "test-" + time.Now().Format("20060102150405"),
-        }
-        jsonBody, _ := json.Marshal(body)
-
-        resp, err := client.Post(
-            baseURL+"/api/v1/checkout",
-            "application/json",
-            bytes.NewBuffer(jsonBody),
-        )
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-        var result map[string]interface{}
-        json.NewDecoder(resp.Body).Decode(&result)
-        checkoutID = result["checkout_id"].(string)
-        assert.NotEmpty(t, checkoutID)
-        assert.Contains(t, []string{"COMPLETED", "FAILED"}, result["status"])
-    })
-
-    // Test 5: Verify Cart Cleared (eventual consistency)
-    t.Run("VerifyCartCleared", func(t *testing.T) {
-        time.Sleep(2 * time.Second) // Wait for Kafka event
-
-        resp, err := client.Get(baseURL + "/api/v1/cart")
-        require.NoError(t, err)
-        defer resp.Body.Close()
-
-        var result map[string]interface{}
-        json.NewDecoder(resp.Body).Decode(&result)
-        items := result["items"].([]interface{})
-        assert.Empty(t, items)
-    })
-}
-```
-
----
-
-## Performance Testing
-
-### Load Test with Apache Bench
-
-```bash
-# Test cart operations throughput
-ab -n 1000 -c 10 -p add-item.json -T application/json \
-  http://localhost:8080/api/v1/cart/items
-
-# Test product listing
-ab -n 5000 -c 50 http://localhost:8080/api/v1/products
-```
-
-### Load Test with `hey`
-
-```bash
-# Install: go install github.com/rakyll/hey@latest
-
-# Product listing (read-heavy)
-hey -n 10000 -c 100 http://localhost:8080/api/v1/products
-
-# Cart retrieval (cache performance)
-hey -n 5000 -c 50 http://localhost:8080/api/v1/cart
-```
-
----
-
-## Monitoring & Verification
-
-### Database Verification
-
-**MongoDB (Cart Data):**
-```bash
-mongosh
-use cartdb
-db.carts.find({ user_id: 1 }).pretty()
-```
-
-**PostgreSQL (Checkout Sessions):**
-```sql
--- Connect to ecommerce database
-\c ecommerce
-
--- View recent checkouts
-SELECT id, user_id, status, total_amount, created_at
-FROM checkout_sessions
-ORDER BY created_at DESC
-LIMIT 10;
-
--- View outbox events
-SELECT id, event_type, aggregate_id, processed_at, created_at
-FROM outbox_events
-ORDER BY created_at DESC
-LIMIT 10;
-```
-
-**Redis (Cart Cache):**
-```bash
-redis-cli
-KEYS cart:*
-GET cart:1
-TTL cart:1
-```
+**PostgreSQL MCP Server (For Agent Automation):**
+
+The PostgreSQL MCP server is available for automated verification during integration testing. Use these MCP tools to verify database state:
+
+1. **List schemas:**
+   ```
+   mcp__postgres-mcp__list_schemas
+   ```
+
+2. **List tables in public schema:**
+   ```
+   mcp__postgres-mcp__list_objects(schema_name: "public", object_type: "table")
+   ```
+
+3. **Get table details:**
+   ```
+   mcp__postgres-mcp__get_object_details(schema_name: "public", object_name: "checkout_sessions", object_type: "table")
+   ```
+
+4. **Execute SQL queries:**
+   ```
+   mcp__postgres-mcp__execute_sql(sql: "SELECT id, user_id, status, total_amount FROM checkout_sessions ORDER BY created_at DESC LIMIT 1")
+   ```
+
+5. **Verify checkout session by ID:**
+   ```
+   mcp__postgres-mcp__execute_sql(sql: "SELECT * FROM checkout_sessions WHERE id = '<checkout_id>'")
+   ```
+
+6. **Verify outbox events:**
+   ```
+   mcp__postgres-mcp__execute_sql(sql: "SELECT event_type, aggregate_id, processed_at FROM outbox_events ORDER BY created_at DESC LIMIT 5")
+   ```
 
 ### Service Logs
 
@@ -1096,16 +810,6 @@ Monitor each service terminal for:
 
 ---
 
-## Next Steps
-
-1. **Automate Tests:** Convert to CI/CD pipeline (GitHub Actions, GitLab CI)
-2. **Add Orders Service:** Test order creation from checkout events
-3. **Add Inventory Timeout:** Test auto-release after 5 minutes
-4. **Add Retry Logic:** Test transient failure recovery
-5. **Add Circuit Breakers:** Test service degradation gracefully
-
----
-
 ## Appendix: Request/Response Examples
 
 ### Add Item Request Body
@@ -1160,6 +864,90 @@ Monitor each service terminal for:
 
 ---
 
-**Document Version:** 1.0
+## Appendix: PostgreSQL MCP Verification Queries
+
+### Common Verification Patterns for Agents
+
+**1. Verify Checkout Session Status:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, user_id, status, total_amount, idempotency_key, created_at
+        FROM checkout_sessions
+        WHERE id = '<checkout_id>'"
+)
+```
+
+**2. Get Latest Checkout Session:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, status, total_amount
+        FROM checkout_sessions
+        ORDER BY created_at DESC
+        LIMIT 1"
+)
+```
+
+**3. Verify Outbox Event Processing:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT event_type, aggregate_id, processed_at, created_at
+        FROM outbox_events
+        WHERE aggregate_id = '<checkout_id>'
+        ORDER BY created_at DESC"
+)
+```
+
+**4. Count Checkout Sessions by Status:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT status, COUNT(*) as count
+        FROM checkout_sessions
+        GROUP BY status"
+)
+```
+
+**5. Verify Idempotency Key:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, status
+        FROM checkout_sessions
+        WHERE idempotency_key = '<idempotency_key>'"
+)
+```
+
+**6. Check for Failed Checkouts:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, failure_reason, created_at
+        FROM checkout_sessions
+        WHERE status = 'FAILED'
+        ORDER BY created_at DESC
+        LIMIT 5"
+)
+```
+
+**7. Verify Table Structure:**
+```
+mcp__postgres-mcp__get_object_details(
+  schema_name: "public",
+  object_name: "checkout_sessions",
+  object_type: "table"
+)
+```
+
+**8. List All Tables:**
+```
+mcp__postgres-mcp__list_objects(
+  schema_name: "public",
+  object_type: "table"
+)
+```
+
+---
+
+**Document Version:** 1.1
 **Last Updated:** February 3, 2026
 **Maintained By:** Development Team
+**Changelog:**
+- v1.1: Added PostgreSQL MCP server integration for automated testing
+- v1.0: Initial integration test flow documentation
