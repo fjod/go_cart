@@ -2,10 +2,12 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/fjod/go_cart/cart-service/internal/domain"
+	"github.com/fjod/go_cart/cart-service/internal/repository"
 	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
@@ -147,6 +149,10 @@ func (s *CartServiceServer) UpdateQuantity(
 	// Update item quantity in repository
 	err := s.service.UpdateQuantity(ctx, userID, req.ProductId, int(req.Quantity))
 	if err != nil {
+		// Check if item was not found in cart
+		if errors.Is(err, repository.ErrItemNotFound) {
+			return nil, status.Error(codes.NotFound, "item not found in cart")
+		}
 		return nil, status.Errorf(codes.Internal, "failed to update item quantity: %v", err)
 	}
 

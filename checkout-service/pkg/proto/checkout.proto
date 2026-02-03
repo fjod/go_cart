@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package checkout;
+
+option go_package = "github.com/fjod/go_cart/checkout-service/pkg/proto";
+
+enum CheckoutStatus {
+  CHECKOUT_STATUS_INITIATED = 0;
+  CHECKOUT_STATUS_INVENTORY_RESERVED = 1;
+  CHECKOUT_STATUS_PAYMENT_PENDING = 2;
+  CHECKOUT_STATUS_PAYMENT_COMPLETED = 3;
+  CHECKOUT_STATUS_COMPLETED = 4;
+  CHECKOUT_STATUS_FAILED = 5;
+}
+
+message InitiateCheckoutRequest {
+  int64 user_id = 1;
+  string idempotency_key = 2;
+}
+
+message InitiateCheckoutResponse {
+  string checkout_id = 1;
+  CheckoutStatus status = 2;
+}
+
+service CheckoutService {
+  rpc InitiateCheckout(InitiateCheckoutRequest) returns (InitiateCheckoutResponse);
+}

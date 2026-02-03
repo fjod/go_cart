@@ -12,6 +12,7 @@ import (
 	"time"
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	checkoutpb "github.com/fjod/go_cart/checkout-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -24,22 +25,24 @@ import (
 // import "github.com/fjod/go_cart/cart-service/pkg/proto"
 
 type Config struct {
-	HTTPPort           string
-	CartServiceAddr    string
-	ProductServiceAddr string
-	RequestTimeout     time.Duration
-	ShutdownTimeout    time.Duration
-	MaxRequestBodySize int64
+	HTTPPort            string
+	CartServiceAddr     string
+	ProductServiceAddr  string
+	CheckoutServiceAddr string
+	RequestTimeout      time.Duration
+	ShutdownTimeout     time.Duration
+	MaxRequestBodySize  int64
 }
 
 func loadConfig() *Config {
 	return &Config{
-		HTTPPort:           getEnv("HTTP_PORT", "8080"),
-		CartServiceAddr:    getEnv("CART_SERVICE_ADDR", "localhost:50052"),
-		ProductServiceAddr: getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051"),
-		RequestTimeout:     30 * time.Second,
-		ShutdownTimeout:    10 * time.Second,
-		MaxRequestBodySize: 1 << 20, // 1MB
+		HTTPPort:            getEnv("HTTP_PORT", "8080"),
+		CartServiceAddr:     getEnv("CART_SERVICE_ADDR", "localhost:50052"),
+		ProductServiceAddr:  getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051"),
+		CheckoutServiceAddr: getEnv("CHECKOUT_SERVICE_ADDR", "localhost:50056"),
+		RequestTimeout:      30 * time.Second,
+		ShutdownTimeout:     10 * time.Second,
+		MaxRequestBodySize:  1 << 20, // 1MB
 	}
 }
 
@@ -78,6 +81,19 @@ func main() {
 	productClient := productpb.NewProductServiceClient(productServiceConn)
 	productHandler := h.NewProductHandler(productClient, cfg.RequestTimeout)
 
+	// Checkout Service Client
+	checkoutServiceConn, err := grpc.NewClient(
+		cfg.CheckoutServiceAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalf("Failed to connect to checkout service: %v", err)
+	}
+	defer checkoutServiceConn.Close()
+
+	checkoutClient := checkoutpb.NewCheckoutServiceClient(checkoutServiceConn)
+	checkoutHandler := h.NewCheckoutHandler(checkoutClient, cfg.RequestTimeout)
+
 	// Setup router
 	r := chi.NewRouter()
 
@@ -108,6 +124,8 @@ func main() {
 		r.Route("/products", func(r chi.Router) {
 			r.Get("/", productHandler.Get)
 		})
+
+		r.Post("/checkout", checkoutHandler.InitiateCheckout)
 	})
 
 	srv := &http.Server{
