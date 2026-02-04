@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -349,4 +350,140 @@ func TestCompleteCheckout_Success(t *testing.T) {
 	err = snap.Scan(&snapShotBytes)
 	assert.Equal(t, `{"items": []}`, string(snapShotBytes))
 	t.Logf("received cart snapshot = %v", string(snapShotBytes))
+}
+
+func TestOutboxEvent_Found(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	sessionID := uuid.New().String()
+	ctx := context.Background()
+
+	// First create a session
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	query := `INSERT INTO outbox_events (aggregate_id, event_type, payload, created_at, processed_at) 
+               VALUES ($1, $2, $3, NOW(), $4)`
+	payload := map[string]interface{}{
+		"checkout_id":  "id",
+		"user_id":      "user",
+		"items":        "[]",
+		"total_amount": 123,
+		"currency":     "rur",
+		"completed_at": time.Now(),
+	}
+	payloadJSON, err := json.Marshal(payload)
+
+	_, insertErr := repo.db.ExecContext(ctx, query,
+		sessionID,
+		"event",
+		payloadJSON,
+		time.Now())
+	assert.NoError(t, insertErr)
+	_, insertErr = repo.db.ExecContext(ctx, query,
+		sessionID,
+		"event2",
+		payloadJSON,
+		nil)
+	assert.NoError(t, insertErr)
+
+	ev, err := repo.GetUnprocessedEvents(ctx, 10)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(ev))
+	assert.Equal(t, "event2", ev[0].EventType)
+}
+
+func TestOutboxEvent_SetProcessed_Found(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	sessionID := uuid.New().String()
+	ctx := context.Background()
+
+	// First create a session
+	session := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+	}
+	err := repo.CreateCheckoutSession(ctx, session)
+	require.NoError(t, err)
+
+	query := `INSERT INTO outbox_events (aggregate_id, event_type, payload, created_at, processed_at) 
+               VALUES ($1, $2, $3, NOW(), $4)`
+	payload := map[string]interface{}{
+		"checkout_id":  "id",
+		"user_id":      "user",
+		"items":        "[]",
+		"total_amount": 123,
+		"currency":     "rur",
+		"completed_at": time.Now(),
+	}
+	payloadJSON, err := json.Marshal(payload)
+
+	_, insertErr := repo.db.ExecContext(ctx, query,
+		sessionID,
+		"event2",
+		payloadJSON,
+		nil)
+	assert.NoError(t, insertErr)
+
+	ev, err := repo.GetUnprocessedEvents(ctx, 10)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(ev))
+	assert.Equal(t, "event2", ev[0].EventType)
+
+	updateErr := repo.MarkEventAsProcessed(ctx, ev[0].ID)
+	assert.NoError(t, updateErr)
+
+	ev, err = repo.GetUnprocessedEvents(ctx, 10)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 0, len(ev))
+}
+
+func TestGetStuck_Success(t *testing.T) {
+	repo, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	sessionID := uuid.New().String()
+
+	// First create a session
+	se := &CheckoutSession{
+		ID:             sessionID,
+		UserID:         "user-123",
+		CartSnapshot:   []byte(`{}`),
+		IdempotencyKey: "update-test-key",
+		TotalAmount:    "100.00",
+		Status:         "PAYMENT_COMPLETED",
+	}
+	query := `INSERT INTO checkout_sessions (id, user_id, cart_snapshot, idempotency_key,  status, total_amount, created_at, updated_at) 
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(),  NOW() - INTERVAL '6 minutes')`
+
+	_, insertErr := repo.db.ExecContext(ctx, query,
+		se.ID,               // id
+		se.UserID,           // user_id
+		se.CartSnapshot,     // cart_snapshot
+		se.IdempotencyKey,   // idempotency_key
+		"PAYMENT_COMPLETED", // status
+		se.TotalAmount)      // postgres container clock skew
+	require.NoError(t, insertErr)
+
+	sessions, err := repo.GetStuckSessions(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(sessions))
+	assert.Equal(t, sessionID, sessions[0].ID)
 }

@@ -61,6 +61,16 @@ func (m *MockRepository) CompleteCheckoutSession(_ context.Context, id *string, 
 	m.OutboxId = id
 	return nil
 }
+func (m *MockRepository) GetUnprocessedEvents(context.Context, int) ([]*r.OutboxEvent, error) {
+	return nil, nil
+}
+
+func (m *MockRepository) MarkEventAsProcessed(context.Context, int) error {
+	return nil
+}
+func (m *MockRepository) GetStuckSessions(context.Context) ([]*r.CheckoutSession, error) {
+	return nil, nil
+}
 
 // MockCartServiceClient implements cartpb.CartServiceClient for testing
 type MockCartServiceClient struct {

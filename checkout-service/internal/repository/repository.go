@@ -35,6 +35,15 @@ type CheckoutSession struct {
 	UpdatedAt              time.Time        `db:"updated_at"`
 }
 
+type OutboxEvent struct {
+	ID          int        `db:"id"`
+	AggregateId string     `db:"aggregate_id"`
+	EventType   string     `db:"event_type"`
+	Payload     []byte     `db:"payload"`
+	CreatedAt   time.Time  `db:"created_at"`
+	ProcessedAt *time.Time `db:"processed_at"` // can be nil
+}
+
 type Credentials struct {
 	Host              string
 	Port              int
@@ -57,6 +66,9 @@ type RepoInterface interface {
 	SetReservation(ctx context.Context, id *string, s *d.CheckoutStatus, reserveId *string) error
 	SetPayment(ctx context.Context, id *string, s *d.CheckoutStatus, payId *string) error
 	CompleteCheckoutSession(ctx context.Context, id *string, snapshot []byte, s *d.CheckoutStatus) error
+	GetUnprocessedEvents(ctx context.Context, limit int) ([]*OutboxEvent, error)
+	MarkEventAsProcessed(ctx context.Context, id int) error
+	GetStuckSessions(ctx context.Context) ([]*CheckoutSession, error)
 }
 
 func NewRepository(cred *Credentials) (*Repository, error) {
@@ -245,4 +257,97 @@ func (r *Repository) CompleteCheckoutSession(ctx context.Context, id *string, sn
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) GetUnprocessedEvents(ctx context.Context, limit int) ([]*OutboxEvent, error) {
+	query := `SELECT * FROM outbox_events where processed_at is null limit $1`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*OutboxEvent
+	for rows.Next() {
+		p := &OutboxEvent{}
+		err := rows.Scan(
+			&p.ID,
+			&p.AggregateId,
+			&p.EventType,
+			&p.Payload,
+			&p.CreatedAt,
+			&p.ProcessedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+		events = append(events, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return events, nil
+}
+
+func (r *Repository) MarkEventAsProcessed(ctx context.Context, id int) error {
+	query := `UPDATE outbox_events SET processed_at = NOW() WHERE id = $1`
+	result, update := r.db.ExecContext(ctx, query, id)
+
+	if update != nil {
+		return fmt.Errorf("update outbox_event: %w", update)
+	}
+	rows, e := result.RowsAffected()
+	if e != nil {
+		return fmt.Errorf("outbox_events rows affected: %w", e)
+	}
+	if rows == 0 {
+		return fmt.Errorf("outbox_event not found: %d", id)
+	}
+	return nil
+}
+
+func (r *Repository) GetStuckSessions(ctx context.Context) ([]*CheckoutSession, error) {
+	query := `
+        SELECT cs.*
+        FROM checkout_sessions cs
+        LEFT JOIN outbox_events oe ON oe.aggregate_id = cs.id
+        WHERE cs.status = 'PAYMENT_COMPLETED'
+          AND cs.updated_at < NOW() - INTERVAL '5 minutes'  -- Grace period
+          AND oe.id IS NULL  -- No outbox event exists
+          `
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stuck sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*CheckoutSession
+	for rows.Next() {
+		p := &CheckoutSession{}
+		err := rows.Scan(
+			&p.ID,
+			&p.UserID,
+			&p.CartSnapshot,
+			&p.Status,
+			&p.IdempotencyKey,
+			&p.InventoryReservationID,
+			&p.PaymentID,
+			&p.TotalAmount,
+			&p.Currency,
+			&p.CreatedAt,
+			&p.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+		sessions = append(sessions, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return sessions, nil
 }

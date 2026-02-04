@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	checkoutgrpc "github.com/fjod/go_cart/checkout-service/internal/grpc"
+	pub "github.com/fjod/go_cart/checkout-service/internal/publisher"
 	"github.com/fjod/go_cart/checkout-service/internal/repository"
 	"github.com/fjod/go_cart/checkout-service/internal/service"
 	pb "github.com/fjod/go_cart/checkout-service/pkg/proto"
@@ -35,7 +37,7 @@ func getEnv(key, defaultValue string) string {
 
 func main() {
 	log.Println("checkout-service starting...")
-
+	var wg sync.WaitGroup
 	// Configuration
 	grpcPort := getEnv("GRPC_PORT", "50056")
 	cartServiceAddr := getEnv("CART_SERVICE_ADDR", "localhost:50052")
@@ -76,6 +78,14 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 	log.Println("Database migrations completed")
+
+	poller := pub.NewOutboxPoller(repo)
+	pollerCtx, pollerCancel := context.WithCancel(context.Background())
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		poller.Run(pollerCtx)
+	}()
 
 	// Create gRPC client connections
 	cartConn, err := grpc.NewClient(cartServiceAddr,
@@ -156,10 +166,23 @@ func main() {
 
 	log.Println("Shutting down checkout service...")
 	grpcServer.GracefulStop()
+	pollerCancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = ctx // Used for cleanup
+	// Wait for poller to finish, with timeout
+	doneChan := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(doneChan)
+	}()
+
+	select {
+	case <-doneChan:
+		log.Println("Poller stopped cleanly")
+	case <-shutdownCtx.Done():
+		log.Println("Poller didn't stop in time")
+	}
 
 	log.Println("Checkout service stopped")
 }
