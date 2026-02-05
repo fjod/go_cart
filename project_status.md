@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** February 3, 2026
+**Last Updated:** February 5, 2026
 **Current Phase:** Phase 2 - Checkout Orchestration (In Progress)
 
 ---
@@ -371,9 +371,9 @@ api-gateway/
 
 ---
 
-#### Checkout Service ✅ gRPC Implementation Complete
+#### Checkout Service 🔄 Outbox Poller Implementation In Progress
 
-**Status:** Saga Steps 1-4 complete with gRPC server and API Gateway integration. Checkout saga fully functional with transactional outbox pattern. Remaining: outbox poller and Kafka integration for cart clearing.
+**Status:** Saga Steps 1-4 complete with gRPC server and API Gateway integration. Checkout saga fully functional with transactional outbox pattern. Outbox poller recovery mechanism implemented with comprehensive tests. Remaining: event publishing to Kafka.
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/checkout-service`)
@@ -460,6 +460,11 @@ api-gateway/
   - Repository atomically (single PostgreSQL transaction) updates checkout_sessions status to COMPLETED and inserts CheckoutCompleted event into outbox_events table
   - Uses defer tx.Rollback() pattern with sql.LevelReadCommitted isolation
   - On failure: full saga compensation (refund payment → mark FAILED → release inventory → return error)
+- ✅ **Domain Model Refactoring** (checkout-service/domain/cart_snapshot.go)
+  - Extracted CartSnapshot and CartSnapshotItem from service layer to domain package
+  - Improved code organization following Go idiomatic structure
+  - Types now reusable across service layer and outbox poller
+  - Maintains same JSON serialization structure for database storage
 - ✅ **Saga Compensation: Inventory Release** (checkout-service/internal/service/checkout_release_inventory.go)
   - releaseInventory() method calls InventoryService.Release() via gRPC with timeout context
   - Used as compensation when payment fails (saga compensation pattern)
@@ -484,8 +489,9 @@ api-gateway/
   - UpdateCheckoutSessionStatus(), SetReservation(), SetPayment() now include RowsAffected() checks
   - Returns error if checkout session not found (0 rows affected)
   - Proper error ordering: check ExecContext error first, then RowsAffected
-  - RepoInterface now has 8 methods (Close, RunMigrations, Get, Create, UpdateStatus, SetReservation, SetPayment, CompleteCheckoutSession)
-  - TestReserveItem_Success, TestProcessPayment_Success, and TestCompleteCheckout_Success tests validate the methods
+  - GetStuckSessions() retrieves sessions in PAYMENT_COMPLETED status without corresponding outbox events
+  - RepoInterface now has 11 methods (Close, RunMigrations, Get, Create, UpdateStatus, SetReservation, SetPayment, CompleteCheckoutSession, GetUnprocessedEvents, MarkEventAsProcessed, GetStuckSessions)
+  - Comprehensive test coverage validates all repository methods
 - ✅ Main entry point (checkout-service/main.go)
   - Environment variable configuration (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH)
   - Database connection with ping verification
@@ -528,6 +534,27 @@ api-gateway/
   - CheckoutStatus enum (6 states)
   - Request/Response message types
   - Proto generation script (genProto.bat)
+- 🔄 **Outbox Poller - Recovery Mechanism** (checkout-service/internal/publisher/outbox_poller.go)
+  - Dual-ticker architecture: eventTick (1s) for event publishing, recoveryTick (5s) for stuck session recovery
+  - recoverStuckSessions() implementation complete with comprehensive error handling
+  - Queries repository for sessions in PAYMENT_COMPLETED status without outbox events
+  - Unmarshals cart snapshot from database JSON
+  - Rebuilds enriched event payload for Kafka consumers
+  - Calls CompleteCheckoutSession() to atomically create outbox event and update status
+  - Graceful error handling with logging at each failure point
+  - Continues processing remaining sessions even if individual sessions fail
+  - Handles edge cases: nil sessions, empty lists, malformed JSON, database errors
+- ✅ **Outbox Poller Tests** (checkout-service/internal/publisher/outbox_poller_test.go)
+  - 7 comprehensive test cases covering all failure scenarios
+  - TestRecoveringStuckSession validates successful recovery flow
+  - TestRecoveringStuckSession_GetStuckSessionsError validates database error handling
+  - TestRecoveringStuckSession_EmptySessionsList validates empty result handling
+  - TestRecoveringStuckSession_InvalidCartSnapshot validates malformed JSON handling
+  - TestRecoveringStuckSession_CompleteCheckoutError validates transaction failure handling
+  - TestRecoveringStuckSession_MultipleSessionsWithPartialFailures validates resilience (2 valid sessions complete, 1 corrupted session skipped)
+  - TestRecoveringStuckSession_NilSessionsList validates nil pointer safety
+  - MockRepository with detailed tracking for verification (CompleteCheckoutCallCount, CompletedCheckoutIDs)
+  - All tests passing, demonstrating robust error recovery
 
 **Pending (per HIGH_LEVEL_IMPLEMENTATION_PLAN.md):**
 - ⏳ Optional extended columns (if needed later):
@@ -538,7 +565,10 @@ api-gateway/
 - ⏳ Protobuf service definitions (partially complete)
   - ✅ InitiateCheckout RPC (DONE)
   - ⏳ GetCheckoutStatus RPC (future)
-- ⏳ Outbox poller (background job to publish events to Kafka)
+- 🔄 Outbox poller event publishing (in progress)
+  - ✅ Recovery mechanism complete (recoverStuckSessions)
+  - ⏳ Event publishing to Kafka (processUnpublishedEvents - TODO implementation pending)
+  - ⏳ Integration with main.go to run poller as background goroutine
 - ⏳ Kafka infrastructure setup for cart clearing after checkout
 
 **File Structure:**
@@ -547,13 +577,17 @@ checkout-service/
 ├── main.go                              ✅ Entry point with gRPC server + migration execution
 ├── domain/
 │   ├── checkout_dto.go                  ✅ CheckoutRequest and CheckoutResponse DTOs
-│   └── checkout_status.go               ✅ CheckoutStatus enum + state machine
+│   ├── checkout_status.go               ✅ CheckoutStatus enum + state machine
+│   └── cart_snapshot.go                 ✅ CartSnapshot and CartSnapshotItem structs (moved from service layer)
 ├── internal/
 │   ├── grpc/
 │   │   └── handler.go                   ✅ gRPC handler with InitiateCheckout RPC
+│   ├── publisher/
+│   │   ├── outbox_poller.go             ✅ Dual-ticker poller with recovery mechanism
+│   │   └── outbox_poller_test.go        ✅ Comprehensive tests (7 test cases, all passing)
 │   ├── repository/
-│   │   ├── repository.go                ✅ PostgreSQL connection + CRUD methods + SetReservation + SetPayment + CompleteCheckoutSession
-│   │   ├── repository_test.go           ✅ Integration tests (10 tests, all passing)
+│   │   ├── repository.go                ✅ PostgreSQL connection + 11 repository methods
+│   │   ├── repository_test.go           ✅ Integration tests (includes GetStuckSessions test)
 │   │   └── migrations/
 │   │       ├── 001_create_tables.up.sql   ✅ checkout_sessions + outbox_events
 │   │       └── 001_create_tables.down.sql ✅ Rollback migration
@@ -564,10 +598,10 @@ checkout-service/
 │       ├── checkout_payment.go           ✅ processPayment() method + convertError() helper
 │       ├── checkout_complete.go          ✅ complete() method - outbox event + status update
 │       ├── checkout_release_inventory.go ✅ releaseInventory() compensation method
-│       ├── cart_snapshot.go              ✅ Cart fetching and hybrid pricing
+│       ├── cart_snapshot.go              ✅ Cart fetching and hybrid pricing (uses domain.CartSnapshot)
 │       ├── handlers.go                   ✅ CartHandler, ProductHandler, InventoryHandler, PaymentHandler
 │       ├── errors.go                     ✅ Custom errors (ErrEmptyCart, IllegalTransitionError)
-│       ├── mocks_test.go                 ✅ Mock implementations (repo, cart, product, inventory, payment)
+│       ├── mocks_test.go                 ✅ Mock implementations with GetStuckSessions support
 │       └── checkout_service_test.go      ✅ Unit tests (12 tests, all passing)
 ├── pkg/
 │   └── proto/
@@ -580,9 +614,10 @@ checkout-service/
 ```
 
 **Test Summary:**
-- Repository: 10 tests (9 existing + 1 TestCompleteCheckout_Success) - All passing
-- Service: 12 tests (11 existing + 1 TestCompleteCheckout) - All passing
-- Total: 22 tests, all passing
+- Repository: Integration tests with GetStuckSessions coverage - All passing
+- Service: 12 unit tests - All passing
+- Publisher: 7 comprehensive test cases for recovery mechanism - All passing
+- Total: 30+ tests, all passing
 
 **How to Run:**
 ```bash
@@ -901,13 +936,97 @@ payment-service/
 - Service naming consistency achieved: Changed AddCartItemService → CartService (commit d88c94c)
 - Protobuf generation automation: Added genProto.bat scripts for Cart Service and Checkout Service
 - **Phase 1 cart functionality complete:** Full cart CRUD operations available via REST API with gRPC backend
-- **Phase 2 checkout functionality ~95% complete:** Full saga orchestration working, only Kafka integration pending for cart clearing
+- **Phase 2 checkout functionality ~97% complete:** Full saga orchestration working, outbox poller recovery mechanism implemented, only Kafka event publishing pending for cart clearing
 - **Integration tests added:** Cart Service now has 5 integration tests using testcontainers (MongoDB + Redis)
 - **Known issue:** Async cache invalidation race condition discovered during integration testing - cache may serve stale data immediately after mutations (workaround documented, fix pending)
+- **Code quality improvements:** Domain models refactored for better separation of concerns (CartSnapshot moved from service layer to domain package)
+- **Resilience features:** Outbox poller now includes automated recovery for stuck checkout sessions (sessions where outbox event creation failed)
+- **Recent commits:**
+  - 29829b2: checkout service, poller repo (GetStuckSessions implementation)
+  - ba8f79a: checkout service, postgres mcp (repository enhancements)
 
 ---
 
-## Recent Updates (February 3, 2026)
+## Recent Updates
+
+### February 5, 2026 - Checkout Service Outbox Poller Recovery
+
+**Outbox Poller Recovery Mechanism Implemented:**
+
+**1. Domain Model Refactoring:**
+- **Created:** `checkout-service/domain/cart_snapshot.go`
+  - Extracted CartSnapshot and CartSnapshotItem from service layer to domain package
+  - Improved separation of concerns following Go best practices
+  - Types now shared between service layer and outbox poller
+  - Maintains JSON serialization for database storage and event payloads
+
+**2. Outbox Poller Implementation:**
+- **Enhanced:** `checkout-service/internal/publisher/outbox_poller.go`
+  - Implemented dual-ticker architecture for event processing and recovery
+  - eventTick: 1 second interval for publishing outbox events to Kafka
+  - recoveryTick: 5 second interval for detecting and recovering stuck sessions
+  - recoverStuckSessions() implementation complete with comprehensive error handling:
+    * Queries GetStuckSessions() to find PAYMENT_COMPLETED sessions without outbox events
+    * Unmarshals cart snapshot JSON from database
+    * Rebuilds enriched event payload matching Kafka consumer expectations
+    * Atomically creates outbox event and updates session status to COMPLETED
+    * Graceful error handling at each step (database errors, JSON unmarshaling, transaction failures)
+    * Continues processing remaining sessions even when individual sessions fail
+    * Detailed logging for observability and debugging
+
+**3. Repository Interface Expansion:**
+- **Modified:** `checkout-service/internal/repository/repository.go`
+  - Added GetStuckSessions() method to RepoInterface
+  - Query identifies sessions in PAYMENT_COMPLETED state without corresponding outbox events
+  - Enables automated recovery of sessions where outbox event creation failed
+  - RepoInterface now has 11 methods (added 3 outbox-related methods)
+
+**4. Service Layer Updates:**
+- **Modified:** `checkout-service/internal/service/cart_snapshot.go`
+  - Updated to use domain.CartSnapshot instead of local struct definition
+  - Removed duplicate type definitions
+  - Maintains same functionality with cleaner code organization
+- **Modified:** `checkout-service/internal/service/checkout_service.go`
+  - Updated mapItemsToItemPointers to use domain.CartSnapshotItem
+  - Service layer now references domain types consistently
+- **Modified:** `checkout-service/internal/service/checkout_service_test.go`
+  - Updated test fixtures to use domain.CartSnapshot types
+  - All 12 unit tests continue to pass
+
+**5. Comprehensive Test Coverage:**
+- **Created:** `checkout-service/internal/publisher/outbox_poller_test.go` (297 lines)
+  - 7 comprehensive test cases covering all edge cases and failure scenarios:
+    1. **TestRecoveringStuckSession** - Validates successful recovery of stuck session
+    2. **TestRecoveringStuckSession_GetStuckSessionsError** - Database connection errors handled gracefully
+    3. **TestRecoveringStuckSession_EmptySessionsList** - Empty results handled without panic
+    4. **TestRecoveringStuckSession_InvalidCartSnapshot** - Malformed JSON skipped, processing continues
+    5. **TestRecoveringStuckSession_CompleteCheckoutError** - Transaction failures logged, don't crash service
+    6. **TestRecoveringStuckSession_MultipleSessionsWithPartialFailures** - Demonstrates resilience: 2 valid sessions complete, 1 corrupted session skipped
+    7. **TestRecoveringStuckSession_NilSessionsList** - Nil pointer safety validated
+  - MockRepository enhanced with:
+    * CompleteCheckoutCallCount for verification
+    * CompletedCheckoutIDs for tracking which sessions were recovered
+    * GetStuckSessions mock implementation
+  - All tests passing, demonstrating robust error handling
+
+**Impact:**
+- Checkout Service now has automated recovery mechanism for stuck sessions
+- System resilience improved - sessions won't remain stuck if outbox event creation fails
+- Recovery runs every 5 seconds, ensuring timely detection and repair
+- Comprehensive test coverage (30+ tests total) validates correctness
+- Next step: Implement processUnpublishedEvents() to publish events to Kafka
+
+**Files Changed:**
+- **New:** checkout-service/domain/cart_snapshot.go (19 lines)
+- **New:** checkout-service/internal/publisher/outbox_poller_test.go (297 lines)
+- **Modified:** checkout-service/internal/publisher/outbox_poller.go (+47 lines for recovery logic)
+- **Modified:** checkout-service/internal/service/cart_snapshot.go (-15 lines, now uses domain types)
+- **Modified:** checkout-service/internal/service/checkout_service.go (updated type references)
+- **Modified:** checkout-service/internal/service/checkout_service_test.go (updated test fixtures)
+
+---
+
+### February 3, 2026 - Integration Testing & Quality Assurance
 
 ### Integration Testing & Quality Assurance
 
@@ -993,7 +1112,7 @@ payment-service/
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- ✅ **Checkout Service: ~95%** (Saga Steps 1-4 complete, transactional outbox pattern, gRPC server running, API Gateway integration, 22 unit tests + integration tests passing; only Kafka outbox poller pending)
+- ✅ **Checkout Service: ~97%** (Saga Steps 1-4 complete, transactional outbox pattern, gRPC server running, API Gateway integration, outbox poller recovery mechanism complete with 7 tests, 30+ unit tests all passing; only Kafka event publishing pending)
 - ❌ Orders Service: 0%
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
@@ -1007,7 +1126,7 @@ payment-service/
 - Docker Infrastructure ~50% complete (MongoDB, Redis, PostgreSQL done; Kafka pending)
 
 **Phase 2 Progress:**
-- **Checkout Service ~95% complete (Saga Steps 1-4 complete: Create Session, Reserve Inventory, Process Payment, Complete Checkout; transactional outbox pattern; gRPC server running; API Gateway integration; 22 unit tests + integration tests passing; only Kafka outbox poller pending)**
+- **Checkout Service ~97% complete (Saga Steps 1-4 complete: Create Session, Reserve Inventory, Process Payment, Complete Checkout; transactional outbox pattern; gRPC server running; API Gateway integration; outbox poller recovery mechanism implemented with 7 comprehensive tests; 30+ unit tests all passing; only Kafka event publishing pending)**
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 - **Integration Testing ✅ 90% complete (16 test cases, 14/16 passing, comprehensive documentation)**

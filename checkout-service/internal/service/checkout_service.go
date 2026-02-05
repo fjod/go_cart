@@ -124,8 +124,8 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 	}, nil
 }
 
-func mapItemsToItemPointers(input []CartSnapshotItem) []*CartSnapshotItem {
-	result := make([]*CartSnapshotItem, len(input))
+func mapItemsToItemPointers(input []d.CartSnapshotItem) []*d.CartSnapshotItem {
+	result := make([]*d.CartSnapshotItem, len(input))
 	for i, item := range input {
 		result[i] = &item
 	}

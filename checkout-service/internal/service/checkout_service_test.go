@@ -16,6 +16,7 @@ import (
 )
 
 func TestInitiateCheckout_NewRequest(t *testing.T) {
+
 	mockRepo := &MockRepository{
 		GetKey:    nil,
 		GetStatus: nil,
@@ -336,12 +337,12 @@ func TestReserveInventory(t *testing.T) {
 	}
 	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 	ctx := context.Background()
-	items := make([]*CartSnapshotItem, 2)
-	items[0] = &CartSnapshotItem{
+	items := make([]*d.CartSnapshotItem, 2)
+	items[0] = &d.CartSnapshotItem{
 		ProductID: 1,
 		Quantity:  1,
 	}
-	items[1] = &CartSnapshotItem{
+	items[1] = &d.CartSnapshotItem{
 		ProductID: 2,
 		Quantity:  2,
 	}
@@ -417,7 +418,7 @@ func TestCompleteCheckout(t *testing.T) {
 	svc := newTestCheckoutService(mockRepo, mockCart, mockProduct, mockInventory, mockPay)
 	ctx := context.Background()
 
-	snapshot := &CartSnapshot{}
+	snapshot := &d.CartSnapshot{}
 	e := svc.complete(ctx, "checkoutId", d.CheckoutStatusPaymentCompleted, snapshot, "user")
 	require.NoError(t, e)
 	assert.Equal(t, "checkoutId", *mockRepo.OutboxId)

@@ -12,23 +12,8 @@ import (
 )
 
 // CartSnapshotItem represents an item in the cart snapshot with price captured at checkout time
-type CartSnapshotItem struct {
-	ProductID   int64   `json:"product_id"`
-	ProductName string  `json:"product_name"`
-	Quantity    int32   `json:"quantity"`
-	UnitPrice   float64 `json:"unit_price"`
-	Subtotal    float64 `json:"subtotal"`
-}
 
-// CartSnapshot represents the full cart state at checkout time
-type CartSnapshot struct {
-	Items       []CartSnapshotItem `json:"items"`
-	TotalAmount float64            `json:"total_amount"`
-	Currency    string             `json:"currency"`
-	CapturedAt  time.Time          `json:"captured_at"`
-}
-
-func (s *CheckoutServiceImpl) getCart(ctx context.Context, request *d.CheckoutRequest) (*CartSnapshot, []byte, error) {
+func (s *CheckoutServiceImpl) getCart(ctx context.Context, request *d.CheckoutRequest) (*d.CartSnapshot, []byte, error) {
 	cartRequest := &cartpb.GetCartRequest{
 		UserId: request.UserID,
 	}
@@ -59,9 +44,9 @@ func (s *CheckoutServiceImpl) getCart(ctx context.Context, request *d.CheckoutRe
 }
 
 // buildCartSnapshot fetches current prices from product service and creates a snapshot
-func (s *CheckoutServiceImpl) buildCartSnapshot(ctx context.Context, cartItems []*cartpb.CartItem) (*CartSnapshot, error) {
-	snapshot := &CartSnapshot{
-		Items:      make([]CartSnapshotItem, 0, len(cartItems)),
+func (s *CheckoutServiceImpl) buildCartSnapshot(ctx context.Context, cartItems []*cartpb.CartItem) (*d.CartSnapshot, error) {
+	snapshot := &d.CartSnapshot{
+		Items:      make([]d.CartSnapshotItem, 0, len(cartItems)),
 		Currency:   "USD",
 		CapturedAt: time.Now(),
 	}
@@ -79,7 +64,7 @@ func (s *CheckoutServiceImpl) buildCartSnapshot(ctx context.Context, cartItems [
 
 		subtotal := product.Product.Price * float64(item.Quantity)
 
-		snapshot.Items = append(snapshot.Items, CartSnapshotItem{
+		snapshot.Items = append(snapshot.Items, d.CartSnapshotItem{
 			ProductID:   item.ProductId,
 			ProductName: product.Product.Name,
 			Quantity:    item.Quantity,

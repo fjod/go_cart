@@ -2,28 +2,35 @@ package publisher
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"time"
 
+	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
 )
 
 type OutboxPoller struct {
-	timeout time.Duration
-	tick    time.Duration
-	repo    r.RepoInterface
+	timeout      time.Duration
+	eventTick    time.Duration
+	recoveryTick time.Duration
+	repo         r.RepoInterface
 }
 
 func NewOutboxPoller(repo r.RepoInterface) *OutboxPoller {
-	return &OutboxPoller{time.Second * 5, time.Second * 1, repo}
+	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo}
 }
 
 func (p *OutboxPoller) Run(ctx context.Context) {
-	ticker := time.NewTicker(p.tick)
-	defer ticker.Stop()
+	eventTicker := time.NewTicker(p.eventTick)
+	recoveryTicker := time.NewTicker(p.recoveryTick)
+	defer eventTicker.Stop()
+	defer recoveryTicker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-eventTicker.C:
 			p.processUnpublishedEvents(ctx)
+		case <-recoveryTicker.C:
 			p.recoverStuckSessions(ctx)
 		case <-ctx.Done():
 			return
@@ -36,5 +43,42 @@ func (p *OutboxPoller) processUnpublishedEvents(ctx context.Context) {
 }
 
 func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
-	// TODO: implement
+	// stuck session is when the checkout status is PAYMENT_COMPLETED but there is no outbox event for it.
+	sessions, err := p.repo.GetStuckSessions(ctx)
+	if err != nil {
+		log.Printf("failed to get stuck sessions: %v", err)
+		return
+	}
+	for _, session := range sessions {
+		log.Printf("recovering stuck session: %v", session.ID)
+
+		var s d.CartSnapshot
+		if err := json.Unmarshal(session.CartSnapshot, &s); err != nil {
+			log.Printf("failed to unmarshal cart snapshot for session %v: %v", session.ID, err)
+			continue
+		}
+
+		payload := map[string]interface{}{
+			"checkout_id":  session.ID,
+			"user_id":      session.UserID,
+			"items":        s.Items,
+			"total_amount": s.TotalAmount,
+			"currency":     s.Currency,
+			"completed_at": session.UpdatedAt,
+		}
+
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("failed to marshal checkout payload in poller: %v", err)
+			continue
+		}
+
+		completedStatus := d.CheckoutStatusCompleted
+		err = p.repo.CompleteCheckoutSession(ctx, &session.ID, payloadJSON, &completedStatus)
+		if err != nil {
+			log.Printf("failed to complete checkout in poller: %v", err)
+		}
+
+		log.Printf("session recovered: %v", session.ID)
+	}
 }
