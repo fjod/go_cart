@@ -7,7 +7,7 @@ import (
 	inventorypb "github.com/fjod/go_cart/inventory-service/pkg/proto"
 )
 
-func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId string, items []*CartSnapshotItem, status d.CheckoutStatus) (*string, error) {
+func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId string, items []*d.CartSnapshotItem, status d.CheckoutStatus) (*string, error) {
 	if !d.CanTransitionTo(status, d.CheckoutStatusInventoryReserved) {
 		return nil, IllegalTransitionError
 	}
@@ -31,7 +31,7 @@ func (s *CheckoutServiceImpl) reserveInventory(ctx context.Context, checkoutId s
 	return &result.ReservationId, nil
 }
 
-func mapItems(items []*CartSnapshotItem) []*inventorypb.ReservationItem {
+func mapItems(items []*d.CartSnapshotItem) []*inventorypb.ReservationItem {
 	resItems := make([]*inventorypb.ReservationItem, len(items))
 	for i, item := range items {
 		resItems[i] = &inventorypb.ReservationItem{

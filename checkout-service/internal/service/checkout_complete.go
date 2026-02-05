@@ -9,7 +9,7 @@ import (
 	d "github.com/fjod/go_cart/checkout-service/domain"
 )
 
-func (s *CheckoutServiceImpl) complete(ctx context.Context, checkoutId string, status d.CheckoutStatus, snapshot *CartSnapshot, userId string) error {
+func (s *CheckoutServiceImpl) complete(ctx context.Context, checkoutId string, status d.CheckoutStatus, snapshot *d.CartSnapshot, userId string) error {
 
 	if !d.CanTransitionTo(status, d.CheckoutStatusCompleted) {
 		return IllegalTransitionError
