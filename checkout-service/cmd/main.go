@@ -79,7 +79,8 @@ func main() {
 	}
 	log.Println("Database migrations completed")
 
-	poller := pub.NewOutboxPoller(repo)
+	kafkaPort := getEnv("KAFKA_PORT", "localhost:9092")
+	poller := pub.NewOutboxPoller(repo, kafkaPort)
 	pollerCtx, pollerCancel := context.WithCancel(context.Background())
 	wg.Add(1)
 	go func() {

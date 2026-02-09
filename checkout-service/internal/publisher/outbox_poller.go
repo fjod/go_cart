@@ -8,6 +8,7 @@ import (
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	"github.com/segmentio/kafka-go"
 )
 
 type OutboxPoller struct {
@@ -15,10 +16,16 @@ type OutboxPoller struct {
 	eventTick    time.Duration
 	recoveryTick time.Duration
 	repo         r.RepoInterface
+	writer       *kafka.Writer
 }
 
-func NewOutboxPoller(repo r.RepoInterface) *OutboxPoller {
-	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo}
+func NewOutboxPoller(repo r.RepoInterface, brokers ...string) *OutboxPoller {
+	w := &kafka.Writer{
+		Addr:     kafka.TCP(brokers...),
+		Topic:    "checkout-outbox",
+		Balancer: &kafka.LeastBytes{},
+	}
+	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo, w}
 }
 
 func (p *OutboxPoller) Run(ctx context.Context) {
@@ -39,7 +46,25 @@ func (p *OutboxPoller) Run(ctx context.Context) {
 }
 
 func (p *OutboxPoller) processUnpublishedEvents(ctx context.Context) {
-	// TODO: implement
+	events, err := p.repo.GetUnprocessedEvents(ctx, 100)
+	if err != nil {
+		log.Printf("failed to fetch events %v", err)
+		return
+	}
+
+	for _, event := range events {
+		errPublish := p.publishToKafka(ctx, event)
+		if errPublish != nil {
+			log.Printf("failed to publish event id = %v with error %v", event.ID, errPublish)
+			continue
+		}
+
+		errMark := p.repo.MarkEventAsProcessed(ctx, event.ID)
+		if errMark != nil {
+			log.Printf("failed to mark event  as processed id = %v with error %v", event.ID, errMark)
+			continue
+		}
+	}
 }
 
 func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
@@ -81,4 +106,17 @@ func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
 
 		log.Printf("session recovered: %v", session.ID)
 	}
+}
+
+func (p *OutboxPoller) publishToKafka(ctx context.Context, event *r.OutboxEvent) error {
+	msg := kafka.Message{
+		Key:   []byte(event.AggregateId), // checkout_id for ordering
+		Value: event.Payload,             // Already JSON from database
+		Headers: []kafka.Header{
+			{Key: "event_type", Value: []byte(event.EventType)},
+		},
+	}
+
+	err := p.writer.WriteMessages(ctx, msg)
+	return err
 }

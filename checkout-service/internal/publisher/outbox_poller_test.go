@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go/modules/kafka"
 )
 
 type MockRepository struct {
@@ -27,6 +30,8 @@ type MockRepository struct {
 	CompleteCheckoutErr       error
 	CompletedCheckoutIDs      []string // Track all completed sessions
 	CompleteCheckoutCallCount int      // Track how many times CompleteCheckoutSession was called
+	OutboxEvents              []*r.OutboxEvent
+	ProcessedId               int
 }
 
 func (m *MockRepository) Close() error {
@@ -71,10 +76,16 @@ func (m *MockRepository) CompleteCheckoutSession(_ context.Context, id *string, 
 }
 
 func (m *MockRepository) GetUnprocessedEvents(context.Context, int) ([]*r.OutboxEvent, error) {
-	return nil, nil
+	if len(m.OutboxEvents) > 0 {
+		ev := []*r.OutboxEvent{m.OutboxEvents[0]} // Return first event once
+		m.OutboxEvents = []*r.OutboxEvent{}
+		return ev, nil
+	}
+	return m.OutboxEvents, nil
 }
 
-func (m *MockRepository) MarkEventAsProcessed(context.Context, int) error {
+func (m *MockRepository) MarkEventAsProcessed(_ context.Context, id int) error {
+	m.ProcessedId = id
 	return nil
 }
 
@@ -83,6 +94,124 @@ func (m *MockRepository) GetStuckSessions(context.Context) ([]*r.CheckoutSession
 		return nil, m.GetStuckSessionsErr
 	}
 	return m.StuckSessions, nil
+}
+
+func setupKafka(t *testing.T) (string, func()) {
+	ctx := context.Background()
+
+	// Start Kafka container using testcontainers Kafka module
+	kafkaContainer, err := kafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
+	require.NoError(t, err)
+
+	// Get broker address
+	brokers, err := kafkaContainer.Brokers(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, brokers, "broker address should not be empty")
+
+	cleanup := func() {
+		if err := kafkaContainer.Terminate(ctx); err != nil {
+			t.Logf("failed to terminate kafka container: %v", err)
+		}
+	}
+
+	return brokers[0], cleanup
+}
+
+func createTopic(t *testing.T, brokerAddr, topic string) {
+	conn, err := kafkaGo.Dial("tcp", brokerAddr)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	controller, err := conn.Controller()
+	require.NoError(t, err)
+
+	controllerConn, err := kafkaGo.Dial("tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
+	require.NoError(t, err)
+	defer controllerConn.Close()
+
+	topicConfigs := []kafkaGo.TopicConfig{{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	}}
+
+	err = controllerConn.CreateTopics(topicConfigs...)
+	if err != nil {
+		t.Logf("topic creation error (may already exist): %v", err)
+	}
+}
+
+func TestOutboxPoller_PublishesEventsToKafka(t *testing.T) {
+	brokerAddr, cleanup := setupKafka(t)
+	defer cleanup()
+
+	// Create test topic
+	createTopic(t, brokerAddr, "checkout-outbox")
+
+	// Give Kafka time to fully initialize the topic
+	time.Sleep(5 * time.Second)
+
+	// Setup mock repository with unprocessed events
+	mockRepo := &MockRepository{
+		OutboxEvents: []*r.OutboxEvent{
+			{
+				ID:          1,
+				AggregateId: "checkout-123",
+				EventType:   "CheckoutCompleted",
+				Payload:     json.RawMessage(`{"checkout_id":"checkout-123","user_id":"user-456"}`),
+				CreatedAt:   time.Now(),
+			},
+		},
+		StuckSessions: []*r.CheckoutSession{},
+	}
+
+	// Create poller with real Kafka writer
+	writer := &kafkaGo.Writer{
+		Addr:         kafkaGo.TCP(brokerAddr),
+		Topic:        "checkout-outbox",
+		Balancer:     &kafkaGo.LeastBytes{},
+		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  10 * time.Second,
+	}
+
+	defer writer.Close()
+
+	poller := &OutboxPoller{
+		timeout:      5 * time.Second,
+		eventTick:    1 * time.Second,
+		recoveryTick: 5 * time.Second,
+		repo:         mockRepo,
+		writer:       writer,
+	}
+
+	// Process events with longer timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	go poller.Run(ctx)
+
+	// Verify message was written to Kafka
+	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
+		Brokers:  []string{brokerAddr},
+		Topic:    "checkout-outbox",
+		GroupID:  "test-consumer",
+		MinBytes: 1,
+		MaxBytes: 10e6,
+	})
+	defer reader.Close()
+
+	msg, err := reader.ReadMessage(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, "checkout-123", string(msg.Key))
+
+	var payload map[string]interface{}
+	err = json.Unmarshal(msg.Value, &payload)
+	require.NoError(t, err)
+
+	assert.Equal(t, "checkout-123", payload["checkout_id"])
+	assert.Equal(t, "user-456", payload["user_id"])
+	// Verify event was marked as processed
+	assert.Equal(t, mockRepo.ProcessedId, 1)
 }
 
 func TestRecoveringStuckSession(t *testing.T) {
