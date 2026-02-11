@@ -7,10 +7,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	c "github.com/fjod/go_cart/cart-service/internal/cache"
 	cartgrpc "github.com/fjod/go_cart/cart-service/internal/grpc"
+	poller2 "github.com/fjod/go_cart/cart-service/internal/poller"
 	"github.com/fjod/go_cart/cart-service/internal/repository"
 	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
@@ -79,6 +82,22 @@ func main() {
 	// Enable reflection for grpcurl/grpcui
 	reflection.Register(grpcServer)
 
+	kafkaPort := getEnv("KAFKA_ADDR", "localhost:9092")
+	poller := poller2.NewPoller(repo, cache, kafkaPort)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	pollerCtx, pollerCancel := context.WithCancel(ctx)
+	go func() {
+		poller.Run(pollerCtx)
+		wg.Done()
+	}()
+
+	chWait := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(chWait)
+	}()
+
 	// Graceful shutdown
 	go func() {
 		log.Printf("Cart service listening on port %s", cartServicePort)
@@ -94,7 +113,20 @@ func main() {
 
 	log.Println("Shutting down cart service...")
 	grpcServer.GracefulStop()
-	mongoDB.Client().Disconnect(ctx)
+	pollerCancel()
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	mongoDB.Client().Disconnect(timeoutCtx)
+
+	poller.Close()
+	select {
+	case <-chWait:
+		log.Println("Poller service stopped")
+	case <-timeoutCtx.Done():
+		log.Println("Poller didn't stop in time")
+	}
+
 	log.Println("Cart service stopped")
 }
 

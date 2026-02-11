@@ -49,6 +49,12 @@ This document describes the complete integration test flow for the e-commerce pl
    - All verification queries are documented in each test phase below
    - Database: PostgreSQL on localhost:5432, schema: public
 
+5. **Kafka MCP Server (For Agent Automation):**
+   - MCP server connection is available for automated Kafka topic verification
+   - Sub-agents can use MCP tools to consume and inspect messages from Kafka topics
+   - Broker: localhost:9092 (started via docker-compose)
+   - Key topic: `checkout-outbox` (published by Checkout Service outbox poller)
+
 ---
 
 ## Agent Automation Guidelines
@@ -76,6 +82,14 @@ Step 3: Verify outbox_events table
       sql: "SELECT event_type FROM outbox_events WHERE aggregate_id = '<checkout_id>'"
     )
   → Assert: event_type matches expected event
+
+Step 4: Verify Kafka message published
+  → mcp__kafka__consume_messages(
+      submitter: "integration-test",
+      topic: "checkout-outbox",
+      consumer_timeout: 10
+    )
+  → Assert: message with matching checkout_id exists in consumed messages
 ```
 
 ---
@@ -519,6 +533,43 @@ mcp__postgres-mcp__execute_sql(
 # - processed_at should be NOT NULL (event published)
 ```
 
+**Kafka MCP Verification (For Agent):**
+```
+# Verify the checkout event was published to the checkout-outbox Kafka topic.
+# The outbox poller publishes events asynchronously, so allow a few seconds.
+mcp__kafka__consume_messages(
+  submitter: "integration-test",
+  topic: "checkout-outbox",
+  consumer_timeout: 10
+)
+
+# Expected result:
+# - At least one message is present in the topic
+# - Message key matches checkout_id (UUID from response)
+# - Message value is valid JSON containing:
+#   - "checkout_id": "<checkout_id>"
+#   - "event_type": "checkout.completed"
+#   - "user_id": 1
+#   - "total_amount": 2599.98
+```
+
+---
+
+#### Test 5.1.1: Describe Kafka Topic
+**Purpose:** Verify the `checkout-outbox` topic exists and is properly configured
+
+```
+mcp__kafka__describe_topic(
+  submitter: "integration-test",
+  topic: "checkout-outbox"
+)
+```
+
+**Expected Result:**
+- Topic `checkout-outbox` exists
+- At least 1 partition
+- Replication factor ≥ 1
+
 ---
 
 #### Test 5.2: Verify Cart Cleared After Checkout
@@ -945,9 +996,69 @@ mcp__postgres-mcp__list_objects(
 
 ---
 
-**Document Version:** 1.1
-**Last Updated:** February 3, 2026
+## Appendix: Kafka MCP Verification Queries
+
+### Common Verification Patterns for Agents
+
+**1. List All Kafka Topics:**
+```
+mcp__kafka__list_topics(
+  submitter: "integration-test",
+  topic: "checkout-outbox"
+)
+```
+
+**2. Describe the Checkout Outbox Topic:**
+```
+mcp__kafka__describe_topic(
+  submitter: "integration-test",
+  topic: "checkout-outbox"
+)
+# Verify: topic exists, partitions configured correctly
+```
+
+**3. Consume Messages from Checkout Outbox (Primary Verification):**
+```
+mcp__kafka__consume_messages(
+  submitter: "integration-test",
+  topic: "checkout-outbox",
+  consumer_timeout: 10
+)
+# Verify after successful checkout:
+# - Message present with matching checkout_id
+# - event_type = "checkout.completed"
+# - processed_at is non-null in outbox_events (poller ran)
+```
+
+**4. Consume with Extended Timeout (Slow Environments):**
+```
+mcp__kafka__consume_messages(
+  submitter: "integration-test",
+  topic: "checkout-outbox",
+  consumer_timeout: 30
+)
+# Use when outbox poller may be delayed (e.g., cold start)
+```
+
+**5. Verify No Message on Failed Checkout:**
+```
+# After a FAILED checkout (Test 7.3), the checkout.failed event
+# may or may not be published depending on implementation.
+# Consume and verify absence of checkout.completed for that checkout_id.
+mcp__kafka__consume_messages(
+  submitter: "integration-test",
+  topic: "checkout-outbox",
+  consumer_timeout: 5
+)
+# Expected: no message with event_type = 'checkout.completed' for the failed checkout_id
+```
+
+---
+
+**Document Version:** 1.2
+**Last Updated:** February 10, 2026
 **Maintained By:** Development Team
 **Changelog:**
+- v1.2: Added Kafka MCP server integration; Test 5.1.1 (describe topic) and Kafka consume verification in Test 5.1; Kafka appendix
 - v1.1: Added PostgreSQL MCP server integration for automated testing
 - v1.0: Initial integration test flow documentation

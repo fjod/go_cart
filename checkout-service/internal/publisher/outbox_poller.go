@@ -21,9 +21,10 @@ type OutboxPoller struct {
 
 func NewOutboxPoller(repo r.RepoInterface, brokers ...string) *OutboxPoller {
 	w := &kafka.Writer{
-		Addr:     kafka.TCP(brokers...),
-		Topic:    "checkout-outbox",
-		Balancer: &kafka.LeastBytes{},
+		Addr:                   kafka.TCP(brokers...),
+		Topic:                  "checkout-outbox",
+		Balancer:               &kafka.LeastBytes{},
+		AllowAutoTopicCreation: true,
 	}
 	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo, w}
 }
