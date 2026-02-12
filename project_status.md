@@ -1,7 +1,7 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** February 11, 2026
-**Current Phase:** Phase 2 - Checkout Orchestration (100% Complete) ✅ | Phase 3 - Order Processing (Not Started)
+**Last Updated:** February 12, 2026
+**Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (Not Started)
 
 ---
 
@@ -356,7 +356,7 @@ cart-service/
   - ✅ Idempotency key validation and propagation
   - ✅ Error handling with proper HTTP status codes
   - ✅ Status mapping from proto enums to human-readable strings
-- ⏳ Orders endpoints (future)
+- ⏳ Orders endpoints (Orders Service now available at :50055)
   - GET /api/v1/orders - List user's orders
   - GET /api/v1/orders/{id} - Get order details
 - ⏳ Real JWT authentication
@@ -803,10 +803,89 @@ payment-service/
 └── go.mod                               ✅ Dependencies configured
 ```
 
-### Phase 3: Order Processing ❌ Not Started
+### Phase 3: Order Processing ✅ Complete
 
 **Services:**
-- ⏳ Orders Service (Kafka consumer)
+- ✅ Orders Service (Kafka consumer + gRPC query API) - **COMPLETED**
+
+---
+
+#### Orders Service ✅ Complete
+
+**Status:** Fully implemented service that consumes checkout events from Kafka, persists orders to PostgreSQL, and exposes order query RPCs via gRPC.
+
+**Completed:**
+- ✅ Go module initialization (`github.com/fjod/go_cart/orders-service`)
+- ✅ Added to Go workspace (go.work)
+- ✅ **Domain layer** (orders-service/internal/domain/order.go)
+  - `OrderStatus` type with constants: CONFIRMED, PROCESSING, SHIPPED, DELIVERED
+  - `OrderItem` struct (ProductID, ProductName, Quantity, Price)
+  - `Order` struct with UUID IDs, UserID, TotalAmount, Currency, Status, Items array, timestamps
+- ✅ **Database migration** (orders-service/internal/repository/migrations/001_create_orders_table.up.sql)
+  - `orders` table: id UUID PK, checkout_id UUID UNIQUE, user_id, total_amount, currency, status DEFAULT 'CONFIRMED', items JSONB, created_at, updated_at
+  - Index on user_id for efficient ListOrders queries
+  - Uses dedicated `orders_schema_migrations` tracking table to avoid collision with checkout-service's `schema_migrations` table in the shared PostgreSQL database
+- ✅ **Repository layer** (orders-service/internal/repository/)
+  - `OrderRepository` interface with CreateOrder, GetOrderByID, ListOrdersByUserID, RunMigrations, Close
+  - Sentinel errors: ErrOrderNotFound, ErrDuplicateCheckout
+  - PostgreSQL implementation with connection pooling (MaxOpenConns: 100, MaxIdleConns: 10)
+  - Duplicate checkout detection via pq.Error code "23505" mapped to ErrDuplicateCheckout
+  - 5 integration tests using testcontainers (postgres:16-alpine)
+- ✅ **Kafka consumer** (orders-service/internal/consumer/checkout_consumer.go)
+  - Subscribes to `checkout-outbox` topic with consumer group `orders-service`
+  - Deserializes `CheckoutCompletedEvent` — uses `eventItem` struct with `json:"unit_price"` tag to correctly map the price field published by checkout-service
+  - Maps event items to domain.OrderItem before persisting
+  - Idempotent: ErrDuplicateCheckout is logged and skipped (at-least-once delivery safe)
+  - Graceful shutdown on context.Canceled
+  - 2 integration tests using testcontainers (Kafka + Postgres)
+- ✅ **gRPC handler** (orders-service/internal/grpc/handler.go)
+  - `GetOrder` RPC: parses UUID, queries by ID, returns codes.NotFound / codes.InvalidArgument on errors
+  - `ListOrders` RPC: queries by user_id and returns the full order slice
+  - Domain to proto conversion with RFC3339 timestamps
+- ✅ **Protobuf definitions** (orders-service/pkg/proto/orders.proto)
+  - `OrdersService` with `GetOrder` and `ListOrders` RPCs
+  - `Order`, `OrderItem`, request/response message types
+  - Generated: orders.pb.go, orders_grpc.pb.go
+  - Proto generation script: genProto.bat
+- ✅ **Main entry point** (orders-service/cmd/main.go)
+  - gRPC server on port 50055 (configurable via GRPC_PORT env var) with reflection enabled
+  - Graceful shutdown with 5-second timeout and WaitGroup
+  - Environment variables: GRPC_PORT, KAFKA_BROKERS, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, MIGRATIONS_PATH
+  - Kafka consumer and gRPC server run as concurrent goroutines
+
+**Bug Fixes Applied:**
+- `orders_schema_migrations` table name prevents collision with checkout-service's `schema_migrations` in the shared PostgreSQL database
+- `eventItem.Price` uses `json:"unit_price"` tag to correctly deserialize price from Kafka payload (checkout-service publishes price as `unit_price`)
+
+**File Structure:**
+```
+orders-service/
+├── cmd/
+│   └── main.go                                          ✅ gRPC server + Kafka consumer with graceful shutdown
+├── internal/
+│   ├── domain/
+│   │   └── order.go                                     ✅ Order, OrderItem entities + OrderStatus enum
+│   ├── consumer/
+│   │   ├── checkout_consumer.go                         ✅ Kafka consumer (checkout-outbox topic)
+│   │   └── checkout_consumer_test.go                    ✅ Integration tests (Kafka + Postgres testcontainers)
+│   ├── repository/
+│   │   ├── repository.go                                ✅ OrderRepository interface + sentinel errors
+│   │   ├── postgres_repository.go                       ✅ PostgreSQL implementation with connection pooling
+│   │   ├── postgres_repository_test.go                  ✅ Integration tests (5 cases, postgres:16-alpine)
+│   │   └── migrations/
+│   │       ├── 001_create_orders_table.up.sql           ✅ orders table + orders_schema_migrations tracker
+│   │       └── 001_create_orders_table.down.sql         ✅ Rollback migration
+│   └── grpc/
+│       └── handler.go                                   ✅ GetOrder + ListOrders RPCs
+├── pkg/
+│   └── proto/
+│       ├── orders.proto                                 ✅ Service definition (GetOrder, ListOrders RPCs)
+│       ├── orders.pb.go                                 ✅ Generated code
+│       └── orders_grpc.pb.go                            ✅ Generated gRPC code
+├── genProto.bat                                         ✅ Protobuf generation script
+├── go.mod                                               ✅ Dependencies (lib/pq, kafka-go, testcontainers)
+└── go.sum                                               ✅ Auto-generated
+```
 
 ---
 
@@ -886,6 +965,35 @@ payment-service/
 
 ## Recent Updates
 
+### February 12, 2026 - Phase 3 Complete: Orders Service Implemented
+
+**Summary:** Orders Service built from scratch, completing Phase 3 (Order Processing). The service consumes `CheckoutCompleted` events from the `checkout-outbox` Kafka topic, creates order records in PostgreSQL, and exposes order query capabilities via gRPC. The end-to-end checkout flow is now fully connected: checkout → Kafka event → cart cleared (Cart Service) and order created (Orders Service).
+
+**Changes:**
+
+**Orders Service - New Service (orders-service/):**
+- Full Go module (`github.com/fjod/go_cart/orders-service`) added to go.work workspace
+- Domain layer: Order entity with OrderStatus (CONFIRMED, PROCESSING, SHIPPED, DELIVERED) and OrderItem
+- Repository layer: PostgreSQL implementation with CreateOrder, GetOrderByID, ListOrdersByUserID; uses `orders_schema_migrations` migration table to avoid conflict with checkout-service's schema_migrations in the shared database
+- Kafka consumer: subscribes to `checkout-outbox` topic, consumer group `orders-service`; idempotent via ErrDuplicateCheckout check; `unit_price` JSON tag fix ensures item prices are correctly deserialized from checkout-service payloads
+- gRPC handler: GetOrder and ListOrders RPCs with UUID validation and proper error codes
+- Main entry point: gRPC on port 50055, concurrent Kafka consumer, graceful shutdown with 5s timeout
+
+**Orders Service - Tests:**
+- 5 repository integration tests (postgres:16-alpine via testcontainers)
+- 2 Kafka consumer integration tests (Kafka + Postgres via testcontainers)
+
+**Integration Test Flow (integration_test_flow.md → v1.3):**
+- Added Terminal 7 (Orders Service :50055) to prerequisites
+- Added Tests 5.3 (verify order created after checkout) and 5.4 (GetOrder by ID)
+- Added Phase 9: Orders Service error scenarios (Tests 9.1–9.5: invalid UUID, not found, empty list, idempotency, schema verification)
+- Updated test suite total to 25 assertions (was 16); current results: 23 PASS / 2 FAIL (2 pre-existing cart response schema mismatches in Tests 3.1 and 3.2, unrelated to orders-service)
+
+**go.work:**
+- `./orders-service` added to workspace
+
+---
+
 ### February 11, 2026 - Cart Service Kafka Consumer Implemented
 
 **Summary:** The final remaining gap in the end-to-end checkout flow has been closed. Cart Service now consumes Kafka events from the checkout-outbox topic and automatically clears carts after successful checkout.
@@ -953,7 +1061,7 @@ payment-service/
 
 ## Progress Summary
 
-**Overall Completion:** ~80%
+**Overall Completion:** ~90%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -976,17 +1084,18 @@ payment-service/
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
 - ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
+- ⏳ **API Gateway Orders Endpoints: 0% (Orders Service now available at :50055; GET /orders and GET /orders/:id pending)**
 - ✅ **Checkout Service: 100%** (Saga Steps 1-4 complete, transactional outbox pattern, gRPC server running, API Gateway integration, outbox poller with both event publishing (processUnpublishedEvents) and recovery mechanism fully implemented and tested with testcontainers, poller integrated into service lifecycle, Kafka infrastructure provisioned, 30+ unit tests all passing)
-- ❌ Orders Service: 0%
+- ✅ **Orders Service: 100%** (Kafka consumer for checkout-outbox, PostgreSQL persistence, GetOrder + ListOrders gRPC RPCs, idempotent event processing, 7 integration tests)
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
 - ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, and Kafka broker + Kafdrop configured)
-- ✅ **Integration Testing: 95%** (16 test cases documented, cart-clearing path now implemented; 16/16 passing requires Kafka in test env)
+- ✅ **Integration Testing: 92%** (25 assertions documented; 23 PASS / 2 FAIL; 2 pre-existing cart schema mismatches unrelated to orders-service; all Orders Service tests passing)
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
 - **Cart Service 100% complete (All 5 gRPC endpoints with Redis caching, Kafka consumer for cart clearing, service layer, unit + integration tests, bug fixes applied)**
-- **API Gateway ~80% complete (All 5 cart + 1 product + 1 checkout endpoints complete; integration tests 14/16 passing without Kafka)**
+- **API Gateway ~80% complete (All 5 cart + 1 product + 1 checkout endpoints complete; orders endpoints pending)**
 - **Docker Infrastructure ✅ 100% complete (MongoDB, Redis, PostgreSQL, Kafka broker, and Kafdrop UI configured)**
 
 **Phase 2 Progress:**
@@ -995,4 +1104,7 @@ payment-service/
 - Inventory Service ✅ 100% complete
 - Payment Service ✅ 100% complete
 - **Kafka Infrastructure ✅ 100% complete (KRaft-mode broker, Kafdrop UI, docker-compose configured)**
-- **Integration Testing ✅ 95% complete (16 test cases, cart-clearing now implemented; full 16/16 requires Kafka running)**
+
+**Phase 3 Progress:**
+- **Orders Service ✅ 100% complete (Kafka consumer consumes checkout-outbox events, creates orders in PostgreSQL, gRPC query API on port 50055, idempotent processing, 7 integration tests with testcontainers)**
+- **Integration Testing ✅ updated (25 assertions total; 23/25 passing; 2 pre-existing failures unrelated to Phase 3 work)**

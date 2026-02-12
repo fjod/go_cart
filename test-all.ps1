@@ -7,7 +7,7 @@ param(
     [int]$Timeout = 300    # Timeout in seconds (default 5 min for integration tests)
 )
 
-$modules = @("cart-service", "product-service", "api-gateway", "inventory-service", "checkout-service")
+$modules = @("cart-service", "product-service", "api-gateway", "inventory-service", "checkout-service", "orders-service")
 $failed = @()
 $passed = @()
 

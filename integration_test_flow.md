@@ -36,6 +36,9 @@ This document describes the complete integration test flow for the e-commerce pl
 
    # Terminal 6 - API Gateway
    go run ./api-gateway/cmd/main.go         # :8080
+
+   # Terminal 7 - Orders Service
+   go run ./orders-service/cmd/main.go      # :50055
    ```
 
 3. **Test Data:**
@@ -602,6 +605,120 @@ curl -X GET http://localhost:8080/api/v1/cart
 
 ---
 
+#### Test 5.3: Verify Order Created After Checkout
+**Purpose:** Verify Orders Service consumed the Kafka event and created an order record
+
+**Pre-condition:** Test 5.1 completed (checkout_id captured), Kafka event published and consumed
+
+```bash
+# Wait for Kafka consumer to process the event (eventual consistency)
+sleep 3
+```
+
+**gRPC Verification via grpcurl:**
+```bash
+# List orders for user 1 — should contain the order from Test 5.1
+grpcurl -plaintext -d '{"user_id": "1"}' localhost:50055 orders.OrdersService/ListOrders
+```
+
+**Expected Response:**
+```json
+{
+  "orders": [
+    {
+      "id": "<order_uuid>",
+      "checkout_id": "<checkout_id_from_5.1>",
+      "user_id": "1",
+      "total_amount": 2599.98,
+      "currency": "USD",
+      "status": "CONFIRMED",
+      "items": [
+        {
+          "product_id": 1,
+          "product_name": "Laptop",
+          "quantity": 2,
+          "price": 1299.99
+        }
+      ],
+      "created_at": "2026-02-..."
+    }
+  ]
+}
+```
+
+**Validation:**
+- Response contains exactly 1 order
+- `checkout_id` matches the UUID from Test 5.1
+- `total_amount` = 2599.98 (2x Laptop)
+- `status` = "CONFIRMED"
+- `items` array matches cart contents at checkout time
+
+**MCP Database Verification (For Agent):**
+```
+# Verify order was created in orders table
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, checkout_id, user_id, total_amount, currency, status, created_at
+        FROM orders
+        WHERE checkout_id = '<checkout_id_from_5.1>'"
+)
+
+# Expected result:
+# - checkout_id matches the checkout from Test 5.1
+# - user_id = '1'
+# - total_amount = 2599.98
+# - status = 'CONFIRMED'
+
+# Verify order items are stored correctly
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, items FROM orders WHERE user_id = '1' ORDER BY created_at DESC LIMIT 1"
+)
+
+# Expected result:
+# - items is a JSON array containing Laptop with quantity 2 and price 1299.99
+```
+
+---
+
+#### Test 5.4: Get Order by ID
+**Purpose:** Verify GetOrder gRPC endpoint returns correct order details
+
+**Pre-condition:** Order ID captured from Test 5.3
+
+```bash
+grpcurl -plaintext -d '{"order_id": "<order_id_from_5.3>"}' localhost:50055 orders.OrdersService/GetOrder
+```
+
+**Expected Response:**
+```json
+{
+  "order": {
+    "id": "<order_uuid>",
+    "checkout_id": "<checkout_id>",
+    "user_id": "1",
+    "total_amount": 2599.98,
+    "currency": "USD",
+    "status": "CONFIRMED",
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Laptop",
+        "quantity": 2,
+        "price": 1299.99
+      }
+    ],
+    "created_at": "2026-02-..."
+  }
+}
+```
+
+**Status:** gRPC `OK`
+
+**Validation:**
+- All fields match what was returned in Test 5.3
+- `created_at` is a valid RFC3339 timestamp
+
+---
+
 ### Phase 6: Checkout Idempotency
 
 #### Test 6.1: Idempotent Retry
@@ -740,6 +857,105 @@ mcp__postgres-mcp__execute_sql(
 
 ---
 
+### Phase 9: Orders Service — Error Scenarios
+
+#### Test 9.1: Get Order with Invalid UUID
+**Purpose:** Verify gRPC error handling for malformed order ID
+
+```bash
+grpcurl -plaintext -d '{"order_id": "not-a-uuid"}' localhost:50055 orders.OrdersService/GetOrder
+```
+
+**Expected Response:**
+```
+ERROR:
+  Code: InvalidArgument
+  Message: invalid order_id: invalid UUID length: 11
+```
+
+**gRPC Status Code:** `INVALID_ARGUMENT (3)`
+
+---
+
+#### Test 9.2: Get Non-existent Order
+**Purpose:** Verify 404 behaviour for unknown order ID
+
+```bash
+grpcurl -plaintext -d '{"order_id": "00000000-0000-0000-0000-000000000000"}' localhost:50055 orders.OrdersService/GetOrder
+```
+
+**Expected Response:**
+```
+ERROR:
+  Code: NotFound
+  Message: order not found: 00000000-0000-0000-0000-000000000000
+```
+
+**gRPC Status Code:** `NOT_FOUND (5)`
+
+---
+
+#### Test 9.3: List Orders for User with No Orders
+**Purpose:** Verify empty result set handling
+
+```bash
+grpcurl -plaintext -d '{"user_id": "nonexistent-user"}' localhost:50055 orders.OrdersService/ListOrders
+```
+
+**Expected Response:**
+```json
+{}
+```
+
+**gRPC Status Code:** `OK`
+
+**Validation:**
+- Returns empty `orders` array (or omitted field — proto3 omits empty repeated)
+- No error returned
+
+---
+
+#### Test 9.4: Order Idempotency via Duplicate Kafka Message
+**Purpose:** Verify Orders Service ignores duplicate `CheckoutCompleted` events (same `checkout_id` processed twice)
+
+**Verification via database — count must remain 1:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT COUNT(*) as order_count
+        FROM orders
+        WHERE checkout_id = '<checkout_id_from_5.1>'"
+)
+
+# Expected result:
+# - order_count = 1 (only one order per checkout, regardless of how many times
+#   the Kafka event was delivered)
+```
+
+---
+
+#### Test 9.5: Verify Orders Table Structure
+**Purpose:** Confirm schema matches the implementation plan
+
+```
+mcp__postgres-mcp__get_object_details(
+  schema_name: "public",
+  object_name: "orders",
+  object_type: "table"
+)
+```
+
+**Expected columns:**
+- `id` UUID PRIMARY KEY
+- `checkout_id` UUID NOT NULL UNIQUE
+- `user_id` VARCHAR(255) NOT NULL
+- `total_amount` DECIMAL(10,2) NOT NULL
+- `currency` VARCHAR(3) NOT NULL DEFAULT 'USD'
+- `status` VARCHAR(50) NOT NULL DEFAULT 'CONFIRMED'
+- `items` JSONB NOT NULL
+- `created_at` / `updated_at` TIMESTAMP NOT NULL
+
+---
+
 ### Phase 8: Cart Cleanup
 
 #### Test 8.1: Clear Cart
@@ -816,12 +1032,14 @@ Monitor each service terminal for:
 ## Test Metrics & Success Criteria
 
 ### Functional Requirements
-- ✅ All 14 test cases pass
+- ✅ All 21 test cases pass (was 14; +7 for Orders Service: 5.3, 5.4, 9.1–9.5)
 - ✅ Cart operations complete in < 200ms (cache hit)
 - ✅ Checkout completes in < 5s (including payment processing)
-- ✅ Idempotency prevents duplicate processing
+- ✅ Order created within 3s of checkout (Kafka consumer latency)
+- ✅ Idempotency prevents duplicate processing (checkout and order creation)
 - ✅ Saga compensation releases inventory on payment failure
 - ✅ Cart cleared after successful checkout (eventual consistency)
+- ✅ Orders Service returns correct error codes (NotFound, InvalidArgument)
 
 ### Non-Functional Requirements
 - ✅ API Gateway handles 1000+ req/s for reads
@@ -1055,10 +1273,78 @@ mcp__kafka__consume_messages(
 
 ---
 
-**Document Version:** 1.2
-**Last Updated:** February 10, 2026
+---
+
+## Appendix: Orders Service MCP Verification Queries
+
+### PostgreSQL Verification
+
+**1. List All Orders:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, checkout_id, user_id, total_amount, currency, status, created_at
+        FROM orders
+        ORDER BY created_at DESC
+        LIMIT 10"
+)
+```
+
+**2. Get Order by Checkout ID:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, checkout_id, user_id, total_amount, status, items
+        FROM orders
+        WHERE checkout_id = '<checkout_id>'"
+)
+```
+
+**3. Count Orders by Status:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT status, COUNT(*) as count
+        FROM orders
+        GROUP BY status"
+)
+```
+
+**4. Verify Order Items JSON:**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT id, jsonb_pretty(items) as items
+        FROM orders
+        WHERE user_id = '1'
+        ORDER BY created_at DESC
+        LIMIT 1"
+)
+```
+
+**5. Verify Idempotency (count orders per checkout):**
+```
+mcp__postgres-mcp__execute_sql(
+  sql: "SELECT checkout_id, COUNT(*) as order_count
+        FROM orders
+        GROUP BY checkout_id
+        HAVING COUNT(*) > 1"
+)
+# Expected result: 0 rows (no duplicate orders per checkout)
+```
+
+**6. Verify Orders Table Exists:**
+```
+mcp__postgres-mcp__list_objects(
+  schema_name: "public",
+  object_type: "table"
+)
+# Expected: 'orders' table present alongside checkout_sessions and outbox_events
+```
+
+---
+
+**Document Version:** 1.3
+**Last Updated:** February 12, 2026
 **Maintained By:** Development Team
 **Changelog:**
+- v1.3: Added Orders Service tests (Phase 5.3, 5.4, Phase 9) and PostgreSQL appendix for orders verification; updated success criteria to 21 tests; added orders-service startup to prerequisites
 - v1.2: Added Kafka MCP server integration; Test 5.1.1 (describe topic) and Kafka consume verification in Test 5.1; Kafka appendix
 - v1.1: Added PostgreSQL MCP server integration for automated testing
 - v1.0: Initial integration test flow documentation
