@@ -37,10 +37,11 @@ type Consumer struct {
 
 func NewConsumer(repo repository.OrderRepository, brokers ...string) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  brokers,
-		Topic:    "checkout-outbox",
-		GroupID:  "orders-service",
-		MaxBytes: 10e6, // 10MB
+		Brokers:     brokers,
+		Topic:       "checkout-outbox",
+		GroupID:     "orders-service",
+		MaxBytes:    10e6, // 10MB
+		StartOffset: kafka.FirstOffset,
 	})
 	return &Consumer{repo, reader}
 }

@@ -216,7 +216,11 @@ func (s *CartServiceServer) ClearCart(
 	// Delete cart from repository
 	err := s.service.ClearCart(ctx, userID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to clear cart: %v", err)
+		if errors.Is(err, repository.ErrCartNotFound) {
+			// Cart already cleared — treat as success (idempotent operation)
+		} else {
+			return nil, status.Errorf(codes.Internal, "failed to clear cart: %v", err)
+		}
 	}
 
 	// Return empty cart response

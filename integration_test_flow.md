@@ -606,7 +606,7 @@ curl -X GET http://localhost:8080/api/v1/cart
 ---
 
 #### Test 5.3: Verify Order Created After Checkout
-**Purpose:** Verify Orders Service consumed the Kafka event and created an order record
+**Purpose:** Verify Orders Service consumed the Kafka event and created an order record, and that the API Gateway exposes it over HTTP
 
 **Pre-condition:** Test 5.1 completed (checkout_id captured), Kafka event published and consumed
 
@@ -615,43 +615,48 @@ curl -X GET http://localhost:8080/api/v1/cart
 sleep 3
 ```
 
-**gRPC Verification via grpcurl:**
+**HTTP Verification via API Gateway:**
 ```bash
-# List orders for user 1 — should contain the order from Test 5.1
-grpcurl -plaintext -d '{"user_id": "1"}' localhost:50055 orders.OrdersService/ListOrders
+# List orders for the authenticated user (user_id=1 via MockAuthMiddleware)
+curl -X GET http://localhost:8080/api/v1/orders
 ```
 
 **Expected Response:**
 ```json
-{
-  "orders": [
-    {
-      "id": "<order_uuid>",
-      "checkout_id": "<checkout_id_from_5.1>",
-      "user_id": "1",
-      "total_amount": 2599.98,
-      "currency": "USD",
-      "status": "CONFIRMED",
-      "items": [
-        {
-          "product_id": 1,
-          "product_name": "Laptop",
-          "quantity": 2,
-          "price": 1299.99
-        }
-      ],
-      "created_at": "2026-02-..."
-    }
-  ]
-}
+[
+  {
+    "id": "<order_uuid>",
+    "checkout_id": "<checkout_id_from_5.1>",
+    "total_amount": 2599.98,
+    "currency": "USD",
+    "status": "CONFIRMED",
+    "items": [
+      {
+        "product_id": 1,
+        "product_name": "Laptop",
+        "quantity": 2,
+        "price": 1299.99
+      }
+    ],
+    "created_at": "2026-02-..."
+  }
+]
 ```
 
+**Status Code:** `200 OK`
+
 **Validation:**
+- Response is a JSON array (never `null`, even when empty)
 - Response contains exactly 1 order
 - `checkout_id` matches the UUID from Test 5.1
 - `total_amount` = 2599.98 (2x Laptop)
 - `status` = "CONFIRMED"
 - `items` array matches cart contents at checkout time
+
+**gRPC Verification via grpcurl (direct service check):**
+```bash
+grpcurl -plaintext -d '{"user_id": "1"}' localhost:50055 orders.OrdersService/ListOrders
+```
 
 **MCP Database Verification (For Agent):**
 ```
@@ -680,42 +685,46 @@ mcp__postgres-mcp__execute_sql(
 ---
 
 #### Test 5.4: Get Order by ID
-**Purpose:** Verify GetOrder gRPC endpoint returns correct order details
+**Purpose:** Verify GetOrder endpoint returns correct order details via both HTTP and gRPC
 
 **Pre-condition:** Order ID captured from Test 5.3
 
+**HTTP Verification via API Gateway:**
 ```bash
-grpcurl -plaintext -d '{"order_id": "<order_id_from_5.3>"}' localhost:50055 orders.OrdersService/GetOrder
+curl -X GET http://localhost:8080/api/v1/orders/<order_id_from_5.3>
 ```
 
 **Expected Response:**
 ```json
 {
-  "order": {
-    "id": "<order_uuid>",
-    "checkout_id": "<checkout_id>",
-    "user_id": "1",
-    "total_amount": 2599.98,
-    "currency": "USD",
-    "status": "CONFIRMED",
-    "items": [
-      {
-        "product_id": 1,
-        "product_name": "Laptop",
-        "quantity": 2,
-        "price": 1299.99
-      }
-    ],
-    "created_at": "2026-02-..."
-  }
+  "id": "<order_uuid>",
+  "checkout_id": "<checkout_id>",
+  "total_amount": 2599.98,
+  "currency": "USD",
+  "status": "CONFIRMED",
+  "items": [
+    {
+      "product_id": 1,
+      "product_name": "Laptop",
+      "quantity": 2,
+      "price": 1299.99
+    }
+  ],
+  "created_at": "2026-02-..."
 }
 ```
 
-**Status:** gRPC `OK`
+**Status Code:** `200 OK`
 
 **Validation:**
 - All fields match what was returned in Test 5.3
 - `created_at` is a valid RFC3339 timestamp
+- Response is a single object (not an array)
+
+**gRPC Verification via grpcurl (direct service check):**
+```bash
+grpcurl -plaintext -d '{"order_id": "<order_id_from_5.3>"}' localhost:50055 orders.OrdersService/GetOrder
+```
 
 ---
 
@@ -956,6 +965,99 @@ mcp__postgres-mcp__get_object_details(
 
 ---
 
+### Phase 10: Orders HTTP Endpoints — Error Scenarios
+
+#### Test 10.1: List Orders — Empty (No Orders Yet)
+**Purpose:** Verify `GET /api/v1/orders` returns an empty array for a user with no orders
+
+**Pre-condition:** Run before any checkout, or with a fresh user
+
+```bash
+curl -X GET http://localhost:8080/api/v1/orders
+```
+
+**Expected Response:**
+```json
+[]
+```
+
+**Status Code:** `200 OK`
+
+**Validation:**
+- Response is a JSON array, not `null`
+- Array is empty
+
+---
+
+#### Test 10.2: Get Order — Invalid UUID Format
+**Purpose:** Verify the gateway returns 400 when the order_id is not a valid UUID
+
+```bash
+curl -X GET http://localhost:8080/api/v1/orders/not-a-uuid
+```
+
+**Expected Response:**
+```json
+{
+  "error": "invalid order_id: not-a-uuid",
+  "code": "invalid_argument"
+}
+```
+
+**Status Code:** `400 Bad Request`
+
+**Validation:**
+- HTTP 400 (not 500)
+- `code` = `"invalid_argument"` (mapped from gRPC `INVALID_ARGUMENT`)
+
+---
+
+#### Test 10.3: Get Order — Not Found
+**Purpose:** Verify the gateway returns 404 for a valid UUID that doesn't exist
+
+```bash
+curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000000
+```
+
+**Expected Response:**
+```json
+{
+  "error": "order not found: 00000000-0000-0000-0000-000000000000",
+  "code": "not_found"
+}
+```
+
+**Status Code:** `404 Not Found`
+
+**Validation:**
+- HTTP 404 (not 500)
+- `code` = `"not_found"` (mapped from gRPC `NOT_FOUND`)
+
+---
+
+#### Test 10.4: Get Order — Orders Service Unavailable
+**Purpose:** Verify graceful degradation when Orders Service is down
+
+**Setup:** Stop the Orders Service (`Ctrl+C` in Terminal 7), then:
+
+```bash
+curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000001
+```
+
+**Expected Response:**
+```json
+{
+  "error": "service unavailable",
+  "code": "service_unavailable"
+}
+```
+
+**Status Code:** `503 Service Unavailable`
+
+**Teardown:** Restart Orders Service before continuing.
+
+---
+
 ### Phase 8: Cart Cleanup
 
 #### Test 8.1: Clear Cart
@@ -1032,7 +1134,7 @@ Monitor each service terminal for:
 ## Test Metrics & Success Criteria
 
 ### Functional Requirements
-- ✅ All 21 test cases pass (was 14; +7 for Orders Service: 5.3, 5.4, 9.1–9.5)
+- ✅ All 25 test cases pass (was 21; +4 for Orders HTTP endpoints: 10.1–10.4)
 - ✅ Cart operations complete in < 200ms (cache hit)
 - ✅ Checkout completes in < 5s (including payment processing)
 - ✅ Order created within 3s of checkout (Kafka consumer latency)
@@ -1340,10 +1442,11 @@ mcp__postgres-mcp__list_objects(
 
 ---
 
-**Document Version:** 1.3
-**Last Updated:** February 12, 2026
+**Document Version:** 1.4
+**Last Updated:** February 16, 2026
 **Maintained By:** Development Team
 **Changelog:**
+- v1.4: Added API Gateway HTTP orders endpoints to Tests 5.3 and 5.4 (curl via :8080); added Phase 10 (Orders HTTP error scenarios: 10.1–10.4); updated success criteria to 25 tests
 - v1.3: Added Orders Service tests (Phase 5.3, 5.4, Phase 9) and PostgreSQL appendix for orders verification; updated success criteria to 21 tests; added orders-service startup to prerequisites
 - v1.2: Added Kafka MCP server integration; Test 5.1.1 (describe topic) and Kafka consume verification in Test 5.1; Kafka appendix
 - v1.1: Added PostgreSQL MCP server integration for automated testing

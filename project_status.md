@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** February 12, 2026
+**Last Updated:** February 16, 2026
 **Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (Not Started)
 
 ---
@@ -180,9 +180,12 @@ product-service/
   - Generates both .pb.go and _grpc.pb.go files
 
 **Known Issues Fixed:**
-- ✅ Bug fix: UpdateQuantity now returns 404 (codes.NotFound) instead of 500 (codes.Internal) when item not found in cart (cart-service/internal/grpc/handler.go:153-155)
+- ✅ Bug fix: UpdateQuantity now returns 404 (codes.NotFound) instead of 500 (codes.Internal) when item not found in cart (cart-service/internal/grpc/handler.go)
   - Added error checking for repository.ErrItemNotFound
   - Properly translates domain errors to gRPC status codes
+- ✅ Bug fix: ClearCart is now idempotent (cart-service/internal/grpc/handler.go)
+  - ErrCartNotFound is caught in the ClearCart handler and treated as a no-op success
+  - DELETE /api/v1/cart on an already-empty cart now returns 200 with empty cart (was 500)
 
 **Kafka Consumer - Cart Clearing:**
 - ✅ Kafka consumer implemented (cart-service/internal/poller/poller.go)
@@ -194,6 +197,10 @@ product-service/
   - Graceful error handling: continues on non-fatal errors, skips ErrCartNotFound (already cleared)
   - Context-aware loop with graceful shutdown on cancellation
   - `Close()` method for clean Kafka reader teardown
+- ✅ Bug fix: Kafka cold-start race condition resolved (cart-service/internal/poller/poller.go)
+  - Added `StartOffset: kafka.FirstOffset` to the Kafka reader config
+  - Fixes the race where the first checkout event was published before the consumer group finished joining
+  - FirstOffset only applies on a consumer group's first-ever connection; subsequent reads use committed offsets
 - ✅ Poller wired into cart-service main (cart-service/cmd/main.go)
   - Instantiated with repo, cache, and KAFKA_ADDR (default: localhost:9092)
   - Runs as background goroutine with WaitGroup lifecycle management
@@ -251,9 +258,9 @@ cart-service/
 
 ---
 
-#### API Gateway ✅ Cart & Product Endpoints Complete
+#### API Gateway ✅ Orders Endpoints Complete
 
-**Status:** All 5 cart REST endpoints and 1 product endpoint implemented with comprehensive unit test coverage
+**Status:** All 5 cart REST endpoints, 1 product endpoint, 1 checkout endpoint, and 2 orders endpoints implemented with comprehensive unit test coverage. 10 routes active.
 
 **Completed:**
 - ✅ Go module initialization (`github.com/fjod/go_cart/api-gateway`)
@@ -265,6 +272,8 @@ cart-service/
 - ✅ gRPC client connections
   - Cart Service client connection (localhost:50052, configurable via CART_SERVICE_ADDR)
   - Product Service client connection (localhost:50051, configurable via PRODUCT_SERVICE_ADDR)
+  - Checkout Service client connection (localhost:50056, configurable via CHECKOUT_SERVICE_ADDR)
+  - Orders Service client connection (localhost:50055, configurable via ORDERS_SERVICE_ADDR)
   - Connection using insecure credentials for development
 - ✅ Middleware stack (api-gateway/internal/http/middleware.go:1-39)
   - Logger middleware (chi built-in)
@@ -321,13 +330,16 @@ cart-service/
   - Unavailable → 503 Service Unavailable
   - DeadlineExceeded → 504 Gateway Timeout
   - Default → 500 Internal Server Error
-- ✅ Complete routing configuration (api-gateway/cmd/main.go:98-113)
+- ✅ Complete routing configuration (api-gateway/cmd/main.go)
   - GET /api/v1/cart - Get user's cart
   - POST /api/v1/cart/items - Add item to cart
   - PUT /api/v1/cart/items/{product_id} - Update item quantity
   - DELETE /api/v1/cart/items/{product_id} - Remove item
   - DELETE /api/v1/cart - Clear entire cart
   - GET /api/v1/products - List all products
+  - POST /api/v1/checkout - Initiate checkout
+  - GET /api/v1/orders - List user's orders
+  - GET /api/v1/orders/{order_id} - Get order details
 - ✅ Configuration management (api-gateway/cmd/main.go:24-40)
   - Environment variable support for HTTP_PORT and CART_SERVICE_ADDR
   - Config struct with sensible defaults
@@ -356,9 +368,13 @@ cart-service/
   - ✅ Idempotency key validation and propagation
   - ✅ Error handling with proper HTTP status codes
   - ✅ Status mapping from proto enums to human-readable strings
-- ⏳ Orders endpoints (Orders Service now available at :50055)
-  - GET /api/v1/orders - List user's orders
-  - GET /api/v1/orders/{id} - Get order details
+- ✅ Orders endpoints - **COMPLETED**
+  - ✅ GET /api/v1/orders - List user's orders (api-gateway/internal/http/orders_handler.go)
+  - ✅ GET /api/v1/orders/{order_id} - Get order details (api-gateway/internal/http/orders_handler.go)
+  - ✅ OrdersHandler struct with NewOrdersHandler constructor
+  - ✅ Response DTOs: OrderResponseDTO, OrderItemDTO with convertProtoOrder() helper
+  - ✅ Reuses existing helpers: getUserIDFromContext, respondJSON, respondError, handleGRPCError
+  - ✅ 15 unit tests (orders_handler_test.go) - all passing
 - ⏳ Real JWT authentication
   - Replace MockAuthMiddleware with actual JWT validation
   - Token parsing and claims extraction
@@ -372,7 +388,7 @@ cart-service/
 ```
 api-gateway/
 ├── cmd/
-│   └── main.go                          ✅ HTTP server with chi router, 7 routes active (5 cart + 1 product + 1 checkout)
+│   └── main.go                          ✅ HTTP server with chi router, 10 routes active (5 cart + 1 product + 1 checkout + 2 orders + 1 health)
 ├── internal/
 │   └── http/
 │       ├── cart_handler.go              ✅ Complete cart handlers (5 endpoints)
@@ -380,8 +396,10 @@ api-gateway/
 │       ├── product_handler.go           ✅ Product handler (1 endpoint)
 │       ├── product_handler_test.go      ✅ Unit tests (4 functions, 7 cases)
 │       ├── checkout_handler.go          ✅ Checkout handler (1 endpoint: InitiateCheckout)
+│       ├── orders_handler.go            ✅ Orders handler (2 endpoints: ListOrders, GetOrder)
+│       ├── orders_handler_test.go       ✅ Unit tests (15 cases, all passing)
 │       └── middleware.go                ✅ Auth and RequestID middlewares
-├── go.mod                               ✅ Dependencies configured (includes checkout-service proto)
+├── go.mod                               ✅ Dependencies configured (includes checkout-service, orders-service proto)
 └── go.sum                               ✅ Auto-generated
 
 ```
@@ -856,6 +874,7 @@ payment-service/
 **Bug Fixes Applied:**
 - `orders_schema_migrations` table name prevents collision with checkout-service's `schema_migrations` in the shared PostgreSQL database
 - `eventItem.Price` uses `json:"unit_price"` tag to correctly deserialize price from Kafka payload (checkout-service publishes price as `unit_price`)
+- Kafka cold-start race condition resolved (orders-service/internal/consumer/checkout_consumer.go): added `StartOffset: kafka.FirstOffset` to the Kafka reader config; fixes the race where the first checkout event was published before the orders consumer group finished joining
 
 **File Structure:**
 ```
@@ -965,103 +984,38 @@ orders-service/
 
 ## Recent Updates
 
-### February 12, 2026 - Phase 3 Complete: Orders Service Implemented
+### February 16, 2026 - API Gateway Orders Endpoints, Bug Fixes, and Integration Test v1.4
 
-**Summary:** Orders Service built from scratch, completing Phase 3 (Order Processing). The service consumes `CheckoutCompleted` events from the `checkout-outbox` Kafka topic, creates order records in PostgreSQL, and exposes order query capabilities via gRPC. The end-to-end checkout flow is now fully connected: checkout → Kafka event → cart cleared (Cart Service) and order created (Orders Service).
-
-**Changes:**
-
-**Orders Service - New Service (orders-service/):**
-- Full Go module (`github.com/fjod/go_cart/orders-service`) added to go.work workspace
-- Domain layer: Order entity with OrderStatus (CONFIRMED, PROCESSING, SHIPPED, DELIVERED) and OrderItem
-- Repository layer: PostgreSQL implementation with CreateOrder, GetOrderByID, ListOrdersByUserID; uses `orders_schema_migrations` migration table to avoid conflict with checkout-service's schema_migrations in the shared database
-- Kafka consumer: subscribes to `checkout-outbox` topic, consumer group `orders-service`; idempotent via ErrDuplicateCheckout check; `unit_price` JSON tag fix ensures item prices are correctly deserialized from checkout-service payloads
-- gRPC handler: GetOrder and ListOrders RPCs with UUID validation and proper error codes
-- Main entry point: gRPC on port 50055, concurrent Kafka consumer, graceful shutdown with 5s timeout
-
-**Orders Service - Tests:**
-- 5 repository integration tests (postgres:16-alpine via testcontainers)
-- 2 Kafka consumer integration tests (Kafka + Postgres via testcontainers)
-
-**Integration Test Flow (integration_test_flow.md → v1.3):**
-- Added Terminal 7 (Orders Service :50055) to prerequisites
-- Added Tests 5.3 (verify order created after checkout) and 5.4 (GetOrder by ID)
-- Added Phase 9: Orders Service error scenarios (Tests 9.1–9.5: invalid UUID, not found, empty list, idempotency, schema verification)
-- Updated test suite total to 25 assertions (was 16); current results: 23 PASS / 2 FAIL (2 pre-existing cart response schema mismatches in Tests 3.1 and 3.2, unrelated to orders-service)
-
-**go.work:**
-- `./orders-service` added to workspace
-
----
-
-### February 11, 2026 - Cart Service Kafka Consumer Implemented
-
-**Summary:** The final remaining gap in the end-to-end checkout flow has been closed. Cart Service now consumes Kafka events from the checkout-outbox topic and automatically clears carts after successful checkout.
+**Summary:** API Gateway orders endpoints completed, closing the HTTP surface for the Orders Service. Two bug fixes applied: ClearCart idempotency in the Cart Service gRPC handler, and a Kafka consumer cold-start race condition in both the Cart Service poller and the Orders Service consumer. Integration test flow updated to v1.4 with Phase 10 (orders HTTP error scenarios) added.
 
 **Changes:**
 
-**Cart Service - Kafka Consumer (cart-service/internal/poller/):**
-- New `poller` package with `Poller` struct consuming from the `checkout-outbox` Kafka topic
-- Consumer group `cart-service-consumer` enables at-least-once delivery guarantees
-- On receiving a `CheckoutCompleted` event: extracts `user_id`, deletes cart from MongoDB, and invalidates Redis cache
-- Graceful error handling: continues processing on failures, safely ignores ErrCartNotFound
-- Context-cancellation-aware loop for clean shutdown
+**API Gateway - Orders Endpoints (api-gateway/):**
+- New `orders_handler.go` with `OrdersHandler` struct, `NewOrdersHandler` constructor, `ListOrders` handler (`GET /api/v1/orders`) and `GetOrder` handler (`GET /api/v1/orders/{order_id}`)
+- Response DTOs `OrderResponseDTO` and `OrderItemDTO` with `convertProtoOrder()` helper
+- `OrdersServiceAddr` config field added (default: `localhost:50055`) and gRPC client initialized in `api-gateway/cmd/main.go`
+- 2 new routes registered, bringing the total active route count to 10
+- 15 unit tests in `orders_handler_test.go` covering success, empty list, unauthorized, gRPC error, missing order ID, and proto conversion cases — all passing
 
-**Cart Service - Main Entry Point (cart-service/cmd/main.go):**
-- Poller instantiated with KAFKA_ADDR environment variable (default: localhost:9092)
-- Runs as background goroutine with WaitGroup lifecycle tracking
-- Shutdown sequence: cancel poller context, wait up to 5 seconds for clean stop, call reader Close()
+**Bug Fix — ClearCart Idempotency (cart-service/internal/grpc/handler.go):**
+- `ErrCartNotFound` is now caught in the `ClearCart` handler and treated as a no-op success
+- `DELETE /api/v1/cart` on an already-empty cart now returns 200 instead of 500
 
-**Cart Service - Poller Integration Test (cart-service/internal/poller/poller_test.go):**
-- End-to-end integration test using testcontainers: Kafka (confluentinc/confluent-local:7.5.0), MongoDB (mongo:7), miniredis
-- Seeds cart in MongoDB and Redis cache, publishes a synthetic CheckoutCompleted event, asserts both are cleared
+**Bug Fix — Kafka Consumer Cold-Start Race (cart-service/internal/poller/poller.go, orders-service/internal/consumer/checkout_consumer.go):**
+- Added `StartOffset: kafka.FirstOffset` to the Kafka reader config in both the Cart Service poller and the Orders Service consumer
+- Resolves the race condition where the first checkout event was published before consumers finished joining the consumer group
+- FirstOffset only affects a consumer group's first-ever connection; subsequent reads use committed offsets as normal
 
-**Checkout Service - Outbox Poller (checkout-service/internal/publisher/outbox_poller.go):**
-- Confirmed complete: processUnpublishedEvents() publishes to checkout-outbox, recoverStuckSessions() handles PAYMENT_COMPLETED sessions without outbox events
-
-**Impact on Integration Tests:**
-- The cart-not-clearing failure (previously expected due to missing Kafka consumer) is now resolved at the code level. Full end-to-end test (16/16) requires Kafka running in the test environment.
+**Integration Test Flow (integration_test_flow.md → v1.4):**
+- Tests 5.3 and 5.4 updated to include HTTP curl verification via API Gateway in addition to grpcurl
+- New Phase 10 added with 4 HTTP-level error scenario tests for the orders endpoints (empty list returns `[]`, invalid UUID returns 400, not-found UUID returns 404, service unavailable returns 503)
+- Run results: 19 PASS / 4 FAIL / 2 SKIP out of 25 tests; Phase 10 tests all passed; remaining failures are Kafka consumer cold-start races on tests 5.2, 5.3, cascaded failure on 7.1, and the ClearCart 500 (now fixed by the bug fix above)
 
 ---
-
-### February 9, 2026 - Phase 2 Complete ✅
-
-**Status Update:** Phase 2 (Checkout Orchestration) is now 100% complete!
-
-**What Was Already Implemented:**
-- ✅ **processUnpublishedEvents()** fully implemented in checkout-service/internal/publisher/outbox_poller.go (lines 48-68)
-  - Fetches unprocessed events from outbox table (batch size: 100)
-  - Publishes each event to Kafka via publishToKafka()
-  - Marks events as processed in database
-  - Comprehensive error handling with logging
-  - Continues processing remaining events even if individual events fail
-- ✅ **Integration test with real Kafka** using testcontainers (TestOutboxPoller_PublishesEventsToKafka)
-  - Spins up confluentinc/confluent-local:7.5.0 Kafka container
-  - Creates checkout-outbox topic
-  - Publishes event through poller
-  - Reads message back with Kafka consumer
-  - Verifies message content and event marked as processed
-- ✅ **publishToKafka()** helper method (lines 111-122)
-  - Creates Kafka message with checkout_id as key for ordering
-  - Includes event_type header
-  - Publishes to checkout-outbox topic
-
-**All Phase 2 Components:**
-1. ✅ Checkout Service saga orchestration (4 steps: Session, Inventory, Payment, Complete)
-2. ✅ Transactional outbox pattern with PostgreSQL
-3. ✅ Outbox poller with dual-ticker architecture (1s events, 5s recovery)
-4. ✅ Event publishing to Kafka (processUnpublishedEvents)
-5. ✅ Stuck session recovery mechanism (recoverStuckSessions)
-6. ✅ Kafka infrastructure (KRaft broker + Kafdrop UI)
-7. ✅ Integration tests (14/16 passing, 2 expected failures: Kafka not running in CI)
-8. ✅ Comprehensive unit tests (30+ tests, all passing)
-
-**Next Phase:** Phase 3 - Orders Service (Kafka consumer for order processing)
-
 
 ## Progress Summary
 
-**Overall Completion:** ~90%
+**Overall Completion:** ~92%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -1079,23 +1033,23 @@ orders-service/
 - ✅ Cart Service Production Readiness: 80% (env vars, graceful shutdown, Redis + Kafka integration done)
 - ✅ **Cart Service Bug Fixes: UpdateQuantity now returns 404 instead of 500 for non-existent items**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
-- ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting pending)
+- ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting, circuit breaker pending)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
-- ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases = 21 functions, 45 cases total)**
-- ⏳ **API Gateway Orders Endpoints: 0% (Orders Service now available at :50055; GET /orders and GET /orders/:id pending)**
+- ✅ **API Gateway Orders Endpoints: 100% (GET /orders and GET /orders/{order_id} complete; orders_handler.go with 15 unit tests)**
+- ✅ **API Gateway Tests: 95% (Cart: 17 functions, 38 cases; Product: 4 functions, 7 cases; Orders: 15 cases = 60 cases total)**
 - ✅ **Checkout Service: 100%** (Saga Steps 1-4 complete, transactional outbox pattern, gRPC server running, API Gateway integration, outbox poller with both event publishing (processUnpublishedEvents) and recovery mechanism fully implemented and tested with testcontainers, poller integrated into service lifecycle, Kafka infrastructure provisioned, 30+ unit tests all passing)
 - ✅ **Orders Service: 100%** (Kafka consumer for checkout-outbox, PostgreSQL persistence, GetOrder + ListOrders gRPC RPCs, idempotent event processing, 7 integration tests)
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
 - ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, and Kafka broker + Kafdrop configured)
-- ✅ **Integration Testing: 92%** (25 assertions documented; 23 PASS / 2 FAIL; 2 pre-existing cart schema mismatches unrelated to orders-service; all Orders Service tests passing)
+- ✅ **Integration Testing: 76%** (25 tests documented in v1.4; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 new orders HTTP endpoints all passing; 4 remaining failures: Kafka consumer cold-start race on tests 5.2 and 5.3, cascaded failure on 7.1, and ClearCart 500 on empty cart now fixed)
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
 - **Cart Service 100% complete (All 5 gRPC endpoints with Redis caching, Kafka consumer for cart clearing, service layer, unit + integration tests, bug fixes applied)**
-- **API Gateway ~80% complete (All 5 cart + 1 product + 1 checkout endpoints complete; orders endpoints pending)**
+- **API Gateway ~90% complete (All 5 cart + 1 product + 1 checkout + 2 orders endpoints complete; JWT auth, rate limiting, circuit breaker pending)**
 - **Docker Infrastructure ✅ 100% complete (MongoDB, Redis, PostgreSQL, Kafka broker, and Kafdrop UI configured)**
 
 **Phase 2 Progress:**
@@ -1106,5 +1060,5 @@ orders-service/
 - **Kafka Infrastructure ✅ 100% complete (KRaft-mode broker, Kafdrop UI, docker-compose configured)**
 
 **Phase 3 Progress:**
-- **Orders Service ✅ 100% complete (Kafka consumer consumes checkout-outbox events, creates orders in PostgreSQL, gRPC query API on port 50055, idempotent processing, 7 integration tests with testcontainers)**
-- **Integration Testing ✅ updated (25 assertions total; 23/25 passing; 2 pre-existing failures unrelated to Phase 3 work)**
+- **Orders Service ✅ 100% complete (Kafka consumer consumes checkout-outbox events, creates orders in PostgreSQL, gRPC query API on port 50055, idempotent processing, 7 integration tests with testcontainers, Kafka FirstOffset cold-start fix applied)**
+- **Integration Testing updated (v1.4; 25 tests; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 orders HTTP error scenarios added and passing)**

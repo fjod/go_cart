@@ -6,19 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A distributed e-commerce platform in Go with microservices architecture for learning purposes.
 
-**Current Phase:** Phase 2 (Checkout Orchestration) - 97% complete
-**Next Phase:** Phase 3 (Order Processing with Kafka)
+**Current Phase:** Phase 4 (Integration & Polish) - Not Started
+**Completed:** Phase 1 (Foundation) ✅ | Phase 2 (Checkout Orchestration) ✅ | Phase 3 (Order Processing) ✅
 
 ## Services Running
 
 | Service | Port | Tech Stack | Status |
 |---------|------|------------|--------|
 | Product Service | :50051 (gRPC) | SQLite | ✅ Complete |
-| Cart Service | :50052 (gRPC) | MongoDB + Redis | ✅ Complete |
+| Cart Service | :50052 (gRPC) | MongoDB + Redis + Kafka | ✅ Complete |
 | Inventory Service | :50053 (gRPC) | In-memory | ✅ Complete |
 | Payment Service | :50054 (gRPC) | Mock | ✅ Complete |
-| Checkout Service | :50056 (gRPC) | PostgreSQL | 🔄 97% (Kafka pending) |
-| API Gateway | :8080 (HTTP) | chi router | ✅ Complete |
+| Orders Service | :50055 (gRPC) | PostgreSQL + Kafka | ✅ Complete |
+| Checkout Service | :50056 (gRPC) | PostgreSQL + Kafka | ✅ Complete |
+| API Gateway | :8080 (HTTP) | chi router | ✅ Complete (10 routes) |
 
 ## Architecture
 
@@ -26,28 +27,30 @@ A distributed e-commerce platform in Go with microservices architecture for lear
                    ┌─────────────────────────┐
                    │   API Gateway :8080     │
                    │      (chi router)       │
-                   └───┬─────────────────┬───┘
-                       │                 │
-         ┌─────────────┼─────────────────┼─────────────┐
-         │             │                 │             │
-    ┌────▼────┐   ┌───▼────┐      ┌─────▼────┐  ┌────▼─────┐
-    │ Product │   │  Cart  │      │Checkout  │  │Inventory │
-    │ :50051  │◄──│ :50052 │      │ :50056   │  │  :50053  │
-    │ SQLite  │   │ Mongo  │      │ Postgres │  │ In-mem   │
-    └─────────┘   │ Redis  │      └────┬─────┘  └──────────┘
-                  └────────┘           │
-                                  ┌────▼─────┐
-                                  │ Payment  │
-                                  │  :50054  │
-                                  │   Mock   │
-                                  └──────────┘
+                   └───┬──────────────────┬──┘
+                       │                  │
+       ┌───────────────┼──────────────────┼──────────────┐
+       │               │                  │              │
+  ┌────▼────┐    ┌─────▼────┐      ┌─────▼────┐  ┌─────▼────┐
+  │ Product │    │   Cart   │      │ Checkout │  │  Orders  │
+  │ :50051  │◄───│  :50052  │      │  :50056  │  │  :50055  │
+  │ SQLite  │    │  Mongo   │      │ Postgres │  │ Postgres │
+  └─────────┘    │  Redis   │      └────┬─────┘  └────▲─────┘
+                 └────▲─────┘           │              │
+                      │            ┌────▼─────┐        │
+                      │            │ Payment  │        │
+                      │            │  :50054  │        │
+                      │            └──────────┘        │
+                      │                                │
+                      └────────── Kafka ───────────────┘
+                              (checkout-outbox)
 ```
 
 ## Build & Run
 
 ### Start Infrastructure
 ```bash
-# MongoDB, Redis, PostgreSQL
+# MongoDB, Redis, PostgreSQL, Kafka (KRaft mode), Kafdrop UI
 docker-compose -f deployments/docker-compose.dev.yml up -d
 ```
 
@@ -58,6 +61,7 @@ go run ./product-service/cmd/main.go    # gRPC :50051
 go run ./cart-service/cmd/main.go       # gRPC :50052
 go run ./inventory-service/cmd/main.go  # gRPC :50053
 go run ./payment-service/cmd/main.go    # gRPC :50054
+go run ./orders-service/cmd/main.go     # gRPC :50055
 go run ./checkout-service/main.go       # gRPC :50056
 go run ./api-gateway/cmd/main.go        # HTTP :8080
 ```
@@ -81,19 +85,22 @@ go test -v -run TestFunctionName ./cart-service/internal/grpc/...
 .\checkout-service\genProto.bat
 .\inventory-service\genProto.bat
 .\payment-service\genProto.bat
+.\orders-service\genProto.bat
 ```
 
 ## API Endpoints (Gateway)
 
 ```
-GET    /health                    Health check
-GET    /api/v1/products          List products
-GET    /api/v1/cart              Get user cart
-POST   /api/v1/cart/items        Add item
-PUT    /api/v1/cart/items/{id}   Update quantity
-DELETE /api/v1/cart/items/{id}   Remove item
-DELETE /api/v1/cart              Clear cart
-POST   /api/v1/checkout          Initiate checkout (saga orchestration)
+GET    /health                        Health check
+GET    /api/v1/products               List products
+GET    /api/v1/cart                   Get user cart
+POST   /api/v1/cart/items             Add item
+PUT    /api/v1/cart/items/{id}        Update quantity
+DELETE /api/v1/cart/items/{id}        Remove item
+DELETE /api/v1/cart                   Clear cart (idempotent)
+POST   /api/v1/checkout               Initiate checkout (saga orchestration)
+GET    /api/v1/orders                 List user's orders
+GET    /api/v1/orders/{order_id}      Get order by ID
 ```
 
 ## Key Architectural Patterns
@@ -109,19 +116,24 @@ POST   /api/v1/checkout          Initiate checkout (saga orchestration)
 2. Reserve Inventory (sync gRPC call)
 3. Process Payment (sync gRPC call)
 4. Complete Checkout (transactional outbox pattern)
-5. Publish Event to Kafka → Cart Service clears cart (async)
+5. Publish Event to Kafka → Cart Service clears cart + Orders Service creates order (async)
 
 **Compensation:** Payment failure → Release inventory → Mark FAILED
 
 ### Transactional Outbox Pattern
 - Atomic write: checkout_sessions status + outbox_events insert
-- Background poller publishes events to Kafka
-- Recovery mechanism for stuck sessions (5s interval)
+- Background poller (1s tick) publishes events to Kafka topic `checkout-outbox`
+- Recovery mechanism for stuck sessions (5s tick)
+
+### Event-Driven Cart Clearing & Order Creation
+- Cart Service: Kafka consumer (`cart-service-consumer` group) clears cart on `CheckoutCompleted`
+- Orders Service: Kafka consumer (`orders-service` group) creates order on `CheckoutCompleted`
+- Both consumers use `StartOffset: kafka.FirstOffset` to avoid cold-start message loss
 
 ### Testing
 - Unit tests with mocks
-- Integration tests with testcontainers (MongoDB, Redis)
-- End-to-end tests: 14/16 passing
+- Integration tests with testcontainers (MongoDB, Redis, Kafka, PostgreSQL)
+- End-to-end tests: 19/25 passing (v1.4)
 
 ## Environment Variables
 
@@ -132,12 +144,15 @@ POST   /api/v1/checkout          Initiate checkout (saga orchestration)
 | CHECKOUT_SERVICE_PORT | Checkout | 50056 |
 | MONGO_URI | Cart | mongodb://localhost:27017 |
 | REDIS_ADDR | Cart | localhost:6379 |
-| DB_HOST, DB_PORT, DB_NAME | Checkout | localhost, 5432, ecommerce |
+| KAFKA_ADDR | Cart | localhost:9092 |
+| KAFKA_BROKERS | Checkout, Orders | localhost:9092 |
+| DB_HOST, DB_PORT, DB_NAME | Checkout, Orders | localhost, 5432, ecommerce |
 | PRODUCT_SERVICE_ADDR | Cart, Gateway, Checkout | localhost:50051 |
 | CART_SERVICE_ADDR | Gateway, Checkout | localhost:50052 |
 | INVENTORY_SERVICE_ADDR | Checkout | localhost:50053 |
 | PAYMENT_SERVICE_ADDR | Checkout | localhost:50054 |
 | CHECKOUT_SERVICE_ADDR | Gateway | localhost:50056 |
+| ORDERS_SERVICE_ADDR | Gateway | localhost:50055 |
 
 ## Service Structure Pattern
 
@@ -151,6 +166,8 @@ service/
 │   ├── service/             # Business logic
 │   ├── grpc/                # gRPC handlers
 │   ├── publisher/           # Outbox poller (Checkout only)
+│   ├── consumer/            # Kafka consumer (Orders only)
+│   ├── poller/              # Kafka consumer (Cart only)
 │   └── store/               # In-memory (Inventory only)
 └── pkg/proto/               # Protobuf definitions
 ```
@@ -159,39 +176,47 @@ service/
 
 ### Phase 1: Foundation ✅ Complete
 - Product Service: 2 endpoints (GetProducts, GetProduct)
-- Cart Service: 5 endpoints (Add, Get, Update, Remove, Clear) with Redis caching
-- API Gateway: 7 REST endpoints
+- Cart Service: 5 endpoints (Add, Get, Update, Remove, Clear) with Redis caching + Kafka consumer
+- API Gateway: 10 REST endpoints
 
-### Phase 2: Checkout Orchestration 🔄 97% Complete
-- Checkout Service: Full saga orchestration with compensation
-- Inventory Service: Stock management with reservations
+### Phase 2: Checkout Orchestration ✅ Complete
+- Checkout Service: Full saga orchestration (4 steps) with compensation
+- Inventory Service: In-memory stock management with reservations
 - Payment Service: Mock payment processing (95% success rate)
-- **Completed:** Saga steps 1-4, outbox recovery mechanism (7 tests passing)
-- **Pending:** Kafka event publishing (processUnpublishedEvents implementation)
+- Outbox poller: event publishing + stuck session recovery
+- Kafka infrastructure: KRaft broker + Kafdrop UI
 
-### Phase 3: Order Processing ❌ Not Started
-- Orders Service (Kafka consumer)
-- Order status tracking
+### Phase 3: Order Processing ✅ Complete
+- Orders Service: Kafka consumer + PostgreSQL persistence + gRPC query API (GetOrder, ListOrders)
+- Idempotent event processing via `checkout_id` UNIQUE constraint
+
+### Phase 4: Integration & Polish ❌ Not Started
+- Distributed tracing (OpenTelemetry)
+- Real JWT authentication (replace MockAuthMiddleware)
+- Rate limiting middleware
+- Circuit breakers
+- Structured logging
+- End-to-end observability
 
 ## Known Issues
 
 1. **Async cache invalidation race**: Cache may serve stale data immediately after mutations (workaround: 50ms sleep in tests)
-2. **Kafka infrastructure**: Not launched yet - cart clearing after checkout pending
-3. **JWT authentication**: MockAuthMiddleware in Gateway (always user_id=1)
+2. **JWT authentication**: MockAuthMiddleware in Gateway always injects user_id=1
+3. **Integration test flakiness**: Tests 5.2/5.3 can fail if Kafka consumer group join latency exceeds test wait window (fixed in code with `FirstOffset`; restart services if observed)
 
 ## Next Priorities
 
-1. Implement Kafka event publishing in outbox poller
-2. Set up Kafka infrastructure (docker-compose)
-3. Add Kafka consumer to Cart Service for clearing carts
-4. Build Orders Service for Phase 3
-5. Replace MockAuthMiddleware with real JWT validation
+1. Replace MockAuthMiddleware with real JWT validation
+2. Add distributed tracing (OpenTelemetry)
+3. Add rate limiting middleware to API Gateway
+4. Implement circuit breakers for backend service calls
+5. Add structured logging (replace fmt.Printf with slog/zap)
 
 ## Testing
 
-- **Total tests:** 30+ unit tests across all services
-- **Integration tests:** 14/16 passing (2 expected failures: Kafka not running)
-- **Test coverage:** Repository, Service, gRPC handler layers
+- **Total tests:** 49+ unit and integration tests across all services
+- **Integration tests:** 19/25 passing (v1.4 flow; 4 failures: Kafka timing + cart schema deviations)
+- **Test coverage:** Repository, Service, gRPC handler, Kafka consumer layers
 
 See `integration_test_flow.md` for full test suite documentation.
 
@@ -199,4 +224,4 @@ See `integration_test_flow.md` for full test suite documentation.
 
 - `HIGH_LEVEL_IMPLEMENTATION_PLAN.md` - Complete architecture blueprint
 - `project_status.md` - Detailed implementation tracking
-- `integration_test_flow.md` - End-to-end test cases
+- `integration_test_flow.md` - End-to-end test cases (v1.4, 25 assertions)

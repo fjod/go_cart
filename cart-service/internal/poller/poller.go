@@ -19,10 +19,11 @@ type Poller struct {
 
 func NewPoller(repo r.CartRepository, cache *c.RedisCache, brokers ...string) *Poller {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  brokers,
-		Topic:    "checkout-outbox",
-		GroupID:  "cart-service-consumer",
-		MaxBytes: 10e6, // 10MB
+		Brokers:     brokers,
+		Topic:       "checkout-outbox",
+		GroupID:     "cart-service-consumer",
+		MaxBytes:    10e6, // 10MB
+		StartOffset: kafka.FirstOffset,
 	})
 	return &Poller{repo, reader, cache}
 }

@@ -13,6 +13,7 @@ import (
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	checkoutpb "github.com/fjod/go_cart/checkout-service/pkg/proto"
+	orderspb "github.com/fjod/go_cart/orders-service/pkg/proto"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -29,6 +30,7 @@ type Config struct {
 	CartServiceAddr     string
 	ProductServiceAddr  string
 	CheckoutServiceAddr string
+	OrdersServiceAddr   string
 	RequestTimeout      time.Duration
 	ShutdownTimeout     time.Duration
 	MaxRequestBodySize  int64
@@ -40,6 +42,7 @@ func loadConfig() *Config {
 		CartServiceAddr:     getEnv("CART_SERVICE_ADDR", "localhost:50052"),
 		ProductServiceAddr:  getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051"),
 		CheckoutServiceAddr: getEnv("CHECKOUT_SERVICE_ADDR", "localhost:50056"),
+		OrdersServiceAddr:   getEnv("ORDERS_SERVICE_ADDR", "localhost:50055"),
 		RequestTimeout:      30 * time.Second,
 		ShutdownTimeout:     10 * time.Second,
 		MaxRequestBodySize:  1 << 20, // 1MB
@@ -94,6 +97,19 @@ func main() {
 	checkoutClient := checkoutpb.NewCheckoutServiceClient(checkoutServiceConn)
 	checkoutHandler := h.NewCheckoutHandler(checkoutClient, cfg.RequestTimeout)
 
+	// Orders Service Client
+	ordersServiceConn, err := grpc.NewClient(
+		cfg.OrdersServiceAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalf("Failed to connect to orders service: %v", err)
+	}
+	defer ordersServiceConn.Close()
+
+	ordersClient := orderspb.NewOrdersServiceClient(ordersServiceConn)
+	ordersHandler := h.NewOrdersHandler(ordersClient, cfg.RequestTimeout)
+
 	// Setup router
 	r := chi.NewRouter()
 
@@ -126,6 +142,11 @@ func main() {
 		})
 
 		r.Post("/checkout", checkoutHandler.InitiateCheckout)
+
+		r.Route("/orders", func(r chi.Router) {
+			r.Get("/", ordersHandler.ListOrders)
+			r.Get("/{order_id}", ordersHandler.GetOrder)
+		})
 	})
 
 	srv := &http.Server{
