@@ -14,9 +14,12 @@ import (
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	checkoutpb "github.com/fjod/go_cart/checkout-service/pkg/proto"
 	orderspb "github.com/fjod/go_cart/orders-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/tracing"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -57,13 +60,18 @@ func getEnv(key, defaultValue string) string {
 }
 func main() {
 
+	shutdown, err := tracing.InitTracer("api-gateway", "localhost:4317")
+	if err != nil {
+		log.Fatalf("failed to init tracer: %v", err)
+	}
+	defer shutdown(context.Background())
 	cfg := loadConfig()
 
 	// Set up gRPC connection to Cart Service
 	cartServiceConn, err := grpc.NewClient(
 		cfg.CartServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to cart service: %v", err)
 	}
@@ -75,11 +83,11 @@ func main() {
 	productServiceConn, err := grpc.NewClient(
 		cfg.ProductServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to product service: %v", err)
 	}
-	defer cartServiceConn.Close()
+	defer productServiceConn.Close()
 
 	productClient := productpb.NewProductServiceClient(productServiceConn)
 	productHandler := h.NewProductHandler(productClient, cfg.RequestTimeout)
@@ -88,7 +96,7 @@ func main() {
 	checkoutServiceConn, err := grpc.NewClient(
 		cfg.CheckoutServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to checkout service: %v", err)
 	}
@@ -101,7 +109,7 @@ func main() {
 	ordersServiceConn, err := grpc.NewClient(
 		cfg.OrdersServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to orders service: %v", err)
 	}
@@ -151,7 +159,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,
-		Handler:      r,
+		Handler:      otelhttp.NewHandler(r, "api-gateway"),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,

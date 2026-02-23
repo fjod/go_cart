@@ -17,8 +17,10 @@ import (
 	"github.com/fjod/go_cart/cart-service/internal/repository"
 	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/tracing"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -46,7 +48,7 @@ func main() {
 	productConn, err := grpc.NewClient(
 		productServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to product service: %v", err)
 	}
@@ -76,7 +78,14 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	shutdown, err := tracing.InitTracer("cart-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	pb.RegisterCartServiceServer(grpcServer, cartServer)
 
 	// Enable reflection for grpcurl/grpcui

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,8 @@ import (
 
 	pg "github.com/fjod/go_cart/payment-service/internal/grpc"
 	pb "github.com/fjod/go_cart/payment-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -24,7 +27,15 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	shutdown, err := tracing.InitTracer("payment-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	pb.RegisterPaymentServiceServer(grpcServer, server)
 
 	// Enable reflection for grpcurl/grpcui

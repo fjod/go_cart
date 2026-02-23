@@ -17,6 +17,8 @@ import (
 	"github.com/fjod/go_cart/checkout-service/internal/repository"
 	"github.com/fjod/go_cart/checkout-service/internal/service"
 	pb "github.com/fjod/go_cart/checkout-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	inventorypb "github.com/fjod/go_cart/inventory-service/pkg/proto"
@@ -90,7 +92,8 @@ func main() {
 
 	// Create gRPC client connections
 	cartConn, err := grpc.NewClient(cartServiceAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to cart service: %v", err)
 	}
@@ -99,7 +102,8 @@ func main() {
 	log.Printf("Connected to cart service at %s", cartServiceAddr)
 
 	productConn, err := grpc.NewClient(productServiceAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to product service: %v", err)
 	}
@@ -108,7 +112,8 @@ func main() {
 	log.Printf("Connected to product service at %s", productServiceAddr)
 
 	inventoryConn, err := grpc.NewClient(inventoryServiceAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to inventory service: %v", err)
 	}
@@ -117,7 +122,8 @@ func main() {
 	log.Printf("Connected to inventory service at %s", inventoryServiceAddr)
 
 	paymentConn, err := grpc.NewClient(paymentServiceAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		log.Fatalf("Failed to connect to payment service: %v", err)
 	}
@@ -149,7 +155,14 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	shutdown, err := tracing.InitTracer("checkout-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	pb.RegisterCheckoutServiceServer(grpcServer, checkoutServer)
 	reflection.Register(grpcServer)
 

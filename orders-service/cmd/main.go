@@ -16,6 +16,8 @@ import (
 	ordersgrpc "github.com/fjod/go_cart/orders-service/internal/grpc"
 	"github.com/fjod/go_cart/orders-service/internal/repository"
 	pb "github.com/fjod/go_cart/orders-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -85,7 +87,16 @@ func main() {
 	}
 
 	ordersHandler := ordersgrpc.NewOrdersHandler(repo)
-	grpcServer := grpc.NewServer()
+
+	shutdown, err := tracing.InitTracer("orders-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
+
 	pb.RegisterOrdersServiceServer(grpcServer, ordersHandler)
 	reflection.Register(grpcServer)
 

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"os"
 
+	"github.com/fjod/go_cart/pkg/tracing"
 	grpcHandler "github.com/fjod/go_cart/product-service/internal/grpc"
 	repository "github.com/fjod/go_cart/product-service/internal/repository"
 	pb "github.com/fjod/go_cart/product-service/pkg/proto"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -40,7 +43,12 @@ func main() {
 	log.Println("Migrations completed successfully")
 
 	// Create gRPC server
-	grpcServer := grpc.NewServer()
+	shutdown, err := tracing.InitTracer("product-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 
 	// Register product service
 	productService := grpcHandler.NewProductServiceServer(repo)
