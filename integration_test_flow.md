@@ -46,13 +46,23 @@ This document describes the complete integration test flow for the e-commerce pl
    - Inventory Service initializes with stock for all products
    - User ID: 1 (provided by MockAuthMiddleware)
 
-4. **PostgreSQL MCP Server (For Agent Automation):**
+4. **Idempotency Key Setup (REQUIRED before running tests):**
+   Idempotency keys must be unique per test run. Set a `RUN_ID` variable once at the start
+   of each session and use it as a prefix throughout. This prevents stale DB state from a
+   previous run short-circuiting validation checks (e.g. the empty-cart test).
+   ```bash
+   export RUN_ID=$(date +%s)
+   # Example: RUN_ID=1708771200
+   # Keys become: 1708771200-test-checkout-001, 1708771200-test-checkout-empty-001, etc.
+   ```
+
+5. **PostgreSQL MCP Server (For Agent Automation):**
    - MCP server connection is available for automated database verification
    - Sub-agents can use MCP tools to verify checkout_sessions and outbox_events tables
    - All verification queries are documented in each test phase below
    - Database: PostgreSQL on localhost:5432, schema: public
 
-5. **Kafka MCP Server (For Agent Automation):**
+6. **Kafka MCP Server (For Agent Automation):**
    - MCP server connection is available for automated Kafka topic verification
    - Sub-agents can use MCP tools to consume and inspect messages from Kafka topics
    - Broker: localhost:9092 (started via docker-compose)
@@ -482,9 +492,7 @@ curl -X PUT http://localhost:8080/api/v1/cart/items/999 \
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
   -H "Content-Type: application/json" \
-  -d '{
-    "idempotency_key": "test-checkout-001"
-  }'
+  -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-001\"}"
 ```
 
 **Expected Response:**
@@ -579,8 +587,13 @@ mcp__kafka__describe_topic(
 **Purpose:** Verify cart cleanup (eventual consistency)
 
 ```bash
-# Wait 2 seconds for async event processing
-sleep 2
+# Wait for async event processing.
+# Two latency sources stack on the first checkout:
+#   1. Outbox poller tick interval: up to 1s
+#   2. Kafka consumer group coordination on cold start (JoinGroup/SyncGroup): up to 2s on Windows/Docker
+# Subsequent checkouts are fast because the consumer is already warm.
+# 5s covers the worst-case combined latency without needing a retry loop.
+sleep 5
 
 curl -X GET http://localhost:8080/api/v1/cart
 ```
@@ -611,8 +624,9 @@ curl -X GET http://localhost:8080/api/v1/cart
 **Pre-condition:** Test 5.1 completed (checkout_id captured), Kafka event published and consumed
 
 ```bash
-# Wait for Kafka consumer to process the event (eventual consistency)
-sleep 3
+# Wait for Kafka consumer to process the event (eventual consistency).
+# Same cold-start budget as Test 5.2 — use 5s for the first checkout in any run.
+sleep 5
 ```
 
 **HTTP Verification via API Gateway:**
@@ -736,9 +750,7 @@ grpcurl -plaintext -d '{"order_id": "<order_id_from_5.3>"}' localhost:50055 orde
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
   -H "Content-Type: application/json" \
-  -d '{
-    "idempotency_key": "test-checkout-001"
-  }'
+  -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-001\"}"
 ```
 
 **Expected Response:**
@@ -768,9 +780,7 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
   -H "Content-Type: application/json" \
-  -d '{
-    "idempotency_key": "test-checkout-empty-001"
-  }'
+  -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-empty-001\"}"
 ```
 
 **Expected Response:**
@@ -821,9 +831,7 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
   -H "Content-Type: application/json" \
-  -d '{
-    "idempotency_key": "test-checkout-fail-001"
-  }'
+  -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-fail-001\"}"
 ```
 
 **Expected Response (on payment failure):**
@@ -1282,7 +1290,7 @@ mcp__postgres-mcp__execute_sql(
 mcp__postgres-mcp__execute_sql(
   sql: "SELECT id, status
         FROM checkout_sessions
-        WHERE idempotency_key = '<idempotency_key>'"
+        WHERE idempotency_key = '${RUN_ID}-test-checkout-001'"
 )
 ```
 
@@ -1442,10 +1450,12 @@ mcp__postgres-mcp__list_objects(
 
 ---
 
-**Document Version:** 1.4
-**Last Updated:** February 16, 2026
+**Document Version:** 1.6
+**Last Updated:** February 24, 2026
 **Maintained By:** Development Team
 **Changelog:**
+- v1.6: Increased sleep in Tests 5.2/5.3 from 2s/3s to 5s; explains cold-start stacking of outbox poller latency and Kafka group coordination latency on first checkout
+- v1.5: Introduced `RUN_ID` variable for unique idempotency keys per test run; fixes Test 7.1 false failure caused by stale DB state across runs
 - v1.4: Added API Gateway HTTP orders endpoints to Tests 5.3 and 5.4 (curl via :8080); added Phase 10 (Orders HTTP error scenarios: 10.1–10.4); updated success criteria to 25 tests
 - v1.3: Added Orders Service tests (Phase 5.3, 5.4, Phase 9) and PostgreSQL appendix for orders verification; updated success criteria to 21 tests; added orders-service startup to prerequisites
 - v1.2: Added Kafka MCP server integration; Test 5.1.1 (describe topic) and Kafka consume verification in Test 5.1; Kafka appendix
