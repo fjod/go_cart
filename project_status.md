@@ -1,7 +1,7 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** February 16, 2026
-**Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (Not Started)
+**Last Updated:** February 26, 2026
+**Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (In Progress)
 
 ---
 
@@ -908,13 +908,44 @@ orders-service/
 
 ---
 
-### Phase 4: Integration & Polish ❌ Not Started
+### Phase 4: Integration & Polish 🔄 In Progress
 
-**Tasks:**
-- ⏳ End-to-end service integration
-- ⏳ Distributed tracing
-- ⏳ Observability and logging
-- ⏳ Testing suite
+#### Distributed Tracing (OpenTelemetry) ✅ Complete
+
+**Status:** Cross-service distributed tracing implemented and wired into all services
+
+**Completed:**
+
+**Shared Tracing Package (pkg/tracing/):**
+- ✅ `pkg/tracing/tracing.go` - `InitTracer(serviceName, collectorAddr string)` function: connects to OTLP collector via gRPC, creates a `TracerProvider` with `AlwaysSample`, registers it as the global OTel provider, sets W3C TraceContext + Baggage composite propagator, returns a `Shutdown` func for graceful cleanup
+- ✅ `pkg/tracing/propagation.go` - `KafkaHeaderCarrier` implementing the W3C `TextMapCarrier` interface over a `map[string]string`; `Inject(ctx)` helper injects the active span context into a header map; `Extract(ctx, headers)` helper restores span context from a header map into a new context; enables end-to-end trace propagation across Kafka message boundaries
+
+**Checkout Service Instrumentation (checkout-service/):**
+- ✅ `checkout-service/internal/service/checkout_service_definitions.go` - `tracer t.Tracer` field added to `CheckoutServiceImpl`; initialized with `otel.Tracer("checkout")` in `NewCheckoutService` constructor
+- ✅ `checkout-service/internal/service/checkout_service.go` - Span `checkout_reserved` created around `CreateCheckoutSession` call; `IdempotencyKey` recorded as a span attribute
+- ✅ `checkout-service/internal/publisher/outbox_poller.go` - Span `kafka - publish - checkout.processed` wraps the Kafka publish step; W3C trace context injected into Kafka message headers via `tracing.Inject(ctx)`
+- ✅ `checkout-service/cmd/main.go` - `tracing.InitTracer("checkout-service", "localhost:4317")` called early in startup (before outbox poller initialization) so all instrumented operations run under an active tracer; gRPC server uses `otelgrpc.NewServerHandler()`; all outbound gRPC client connections use `otelgrpc.NewClientHandler()`
+
+**Cart Service Instrumentation (cart-service/):**
+- ✅ `cart-service/internal/poller/poller.go` - W3C trace context extracted from incoming Kafka message headers via `tracing.Extract(ctx, headers)`; span `kafka - consume - checkout.processed` created from the extracted parent context, completing the cross-service trace link from Checkout Service publish through to Cart Service consume
+- ✅ `cart-service/cmd/main.go` - `tracing.InitTracer("cart-service", "localhost:4317")` added; gRPC server uses `otelgrpc.NewServerHandler()`; Product Service client uses `otelgrpc.NewClientHandler()`
+
+**All Other Services Instrumented:**
+- ✅ `api-gateway/cmd/main.go` - `tracing.InitTracer("api-gateway", "localhost:4317")` added; HTTP server wrapped with `otelhttp.NewHandler(r, "api-gateway")` for automatic HTTP span creation; all four outbound gRPC client connections (Cart, Product, Checkout, Orders) use `otelgrpc.NewClientHandler()`
+- ✅ `orders-service/cmd/main.go` - `tracing.InitTracer("orders-service", "localhost:4317")` added; gRPC server uses `otelgrpc.NewServerHandler()`
+- ✅ `inventory-service/cmd/main.go` - `tracing.InitTracer("inventory-service", "localhost:4317")` added; gRPC server uses `otelgrpc.NewServerHandler()`
+- ✅ `payment-service/cmd/main.go` - `tracing.InitTracer("payment-service", "localhost:4317")` added; gRPC server uses `otelgrpc.NewServerHandler()`
+- ✅ `product-service/cmd/main.go` - `tracing.InitTracer("product-service", "localhost:4317")` added; gRPC server uses `otelgrpc.NewServerHandler()`
+
+**Observability Infrastructure (deployments/):**
+- ✅ `deployments/docker-compose.dev.yml` - OTel Collector container added (`otel/opentelemetry-collector-contrib:0.95.0`); ports 4317 (gRPC OTLP), 4318 (HTTP OTLP), 8888 (collector metrics); Jaeger container added (`jaegertracing/all-in-one:1.54`); Jaeger UI accessible at port 16686; Jaeger gRPC receiver on port 14250
+- ✅ `deployments/otel-config.yaml` - OTel Collector pipeline config: OTLP receiver (gRPC + HTTP), batch processor (1s timeout, 1024 batch size), dual exporters: `otlp/jaeger` forwarding to Jaeger and `debug` for console output
+
+**Remaining Phase 4 Tasks:**
+- ⏳ Real JWT authentication (replace MockAuthMiddleware in API Gateway)
+- ⏳ Rate limiting middleware
+- ⏳ Circuit breakers for backend gRPC calls
+- ⏳ Structured logging (replace fmt.Printf/log with slog or zap)
 
 ---
 
@@ -984,6 +1015,39 @@ orders-service/
 
 ## Recent Updates
 
+### February 26, 2026 - OpenTelemetry Distributed Tracing (Phase 4 Partial)
+
+**Summary:** Distributed tracing wired across all seven services using OpenTelemetry. A shared `pkg/tracing` module provides tracer initialization and Kafka header carrier helpers. Every service now registers an OTLP tracer on startup, gRPC traffic is automatically instrumented via `otelgrpc`, HTTP traffic at the API Gateway is instrumented via `otelhttp`, and trace context is propagated across Kafka message boundaries (Checkout Service outbox poller injects W3C context; Cart Service Kafka consumer extracts it). Jaeger and the OTel Collector have been added to the dev Docker Compose stack, making traces observable in the Jaeger UI at port 16686.
+
+**Changes:**
+
+**New Shared Package (pkg/tracing/):**
+- `pkg/tracing/tracing.go` - `InitTracer` function connecting to OTLP collector at a given address, creating a `TracerProvider` with `AlwaysSample`, setting the global OTel tracer and W3C composite propagator, returning a shutdown callback
+- `pkg/tracing/propagation.go` - `KafkaHeaderCarrier` implementing `TextMapCarrier` over a string map; `Inject(ctx)` and `Extract(ctx, headers)` package-level helpers for Kafka trace context propagation
+
+**Checkout Service:**
+- `checkout-service/internal/service/checkout_service_definitions.go` - Added `tracer t.Tracer` field to `CheckoutServiceImpl`, initialized with `otel.Tracer("checkout")` in the constructor
+- `checkout-service/internal/service/checkout_service.go` - Span `checkout_reserved` added around `CreateCheckoutSession` with `IdempotencyKey` span attribute
+- `checkout-service/internal/publisher/outbox_poller.go` - Span `kafka - publish - checkout.processed` wraps the Kafka publish; W3C trace context injected into message headers
+- `checkout-service/cmd/main.go` - `InitTracer` moved to early startup (before outbox poller init); all outbound gRPC clients use `otelgrpc.NewClientHandler()`; gRPC server uses `otelgrpc.NewServerHandler()`
+
+**Cart Service:**
+- `cart-service/internal/poller/poller.go` - Extracts W3C trace context from incoming Kafka message headers; starts span `kafka - consume - checkout.processed` as a child of the propagated context, completing the cross-service trace
+- `cart-service/cmd/main.go` - `InitTracer("cart-service", ...)` added; gRPC server uses `otelgrpc.NewServerHandler()`
+
+**All Remaining Services:**
+- `api-gateway/cmd/main.go` - `InitTracer("api-gateway", ...)` added; HTTP server wrapped with `otelhttp.NewHandler`; all gRPC clients use `otelgrpc.NewClientHandler()`
+- `orders-service/cmd/main.go` - `InitTracer("orders-service", ...)` and `otelgrpc.NewServerHandler()` added
+- `inventory-service/cmd/main.go` - `InitTracer("inventory-service", ...)` and `otelgrpc.NewServerHandler()` added
+- `payment-service/cmd/main.go` - `InitTracer("payment-service", ...)` and `otelgrpc.NewServerHandler()` added
+- `product-service/cmd/main.go` - `InitTracer("product-service", ...)` and `otelgrpc.NewServerHandler()` added
+
+**Observability Infrastructure:**
+- `deployments/docker-compose.dev.yml` - OTel Collector (`otel/opentelemetry-collector-contrib:0.95.0`, ports 4317/4318/8888) and Jaeger (`jaegertracing/all-in-one:1.54`, UI port 16686) added to dev stack
+- `deployments/otel-config.yaml` - OTel Collector pipeline: OTLP receiver -> batch processor -> `otlp/jaeger` + `debug` exporters
+
+---
+
 ### February 16, 2026 - API Gateway Orders Endpoints, Bug Fixes, and Integration Test v1.4
 
 **Summary:** API Gateway orders endpoints completed, closing the HTTP surface for the Orders Service. Two bug fixes applied: ClearCart idempotency in the Cart Service gRPC handler, and a Kafka consumer cold-start race condition in both the Cart Service poller and the Orders Service consumer. Integration test flow updated to v1.4 with Phase 10 (orders HTTP error scenarios) added.
@@ -1015,7 +1079,7 @@ orders-service/
 
 ## Progress Summary
 
-**Overall Completion:** ~92%
+**Overall Completion:** ~95%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -1043,7 +1107,8 @@ orders-service/
 - ✅ **Orders Service: 100%** (Kafka consumer for checkout-outbox, PostgreSQL persistence, GetOrder + ListOrders gRPC RPCs, idempotent event processing, 7 integration tests)
 - ✅ **Inventory Service: 100%** (in-memory stub with 4 gRPC endpoints, 23 unit tests)
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
-- ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, and Kafka broker + Kafdrop configured)
+- ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, Kafka broker + Kafdrop, OTel Collector, and Jaeger configured)
+- ✅ **Distributed Tracing: 100%** (OpenTelemetry instrumentation across all 7 services; gRPC auto-instrumented via otelgrpc; HTTP instrumented via otelhttp; Kafka trace propagation via W3C headers; Jaeger UI available at port 16686)
 - ✅ **Integration Testing: 76%** (25 tests documented in v1.4; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 new orders HTTP endpoints all passing; 4 remaining failures: Kafka consumer cold-start race on tests 5.2 and 5.3, cascaded failure on 7.1, and ClearCart 500 on empty cart now fixed)
 
 **Phase 1 Progress:**
@@ -1062,3 +1127,10 @@ orders-service/
 **Phase 3 Progress:**
 - **Orders Service ✅ 100% complete (Kafka consumer consumes checkout-outbox events, creates orders in PostgreSQL, gRPC query API on port 50055, idempotent processing, 7 integration tests with testcontainers, Kafka FirstOffset cold-start fix applied)**
 - **Integration Testing updated (v1.4; 25 tests; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 orders HTTP error scenarios added and passing)**
+
+**Phase 4 Progress:**
+- **Distributed Tracing ✅ 100% complete (OpenTelemetry across all 7 services; shared pkg/tracing module; gRPC auto-instrumented; HTTP instrumented at API Gateway; Kafka W3C context propagation between Checkout and Cart; Jaeger + OTel Collector in Docker Compose)**
+- Real JWT authentication: not started
+- Rate limiting middleware: not started
+- Circuit breakers: not started
+- Structured logging: not started

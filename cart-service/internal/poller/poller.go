@@ -8,7 +8,9 @@ import (
 
 	c "github.com/fjod/go_cart/cart-service/internal/cache"
 	r "github.com/fjod/go_cart/cart-service/internal/repository"
+	pk "github.com/fjod/go_cart/pkg/tracing"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
 )
 
 type Poller struct {
@@ -50,6 +52,14 @@ func (p *Poller) getMessagesAndEmptyCart(ctx context.Context) {
 		fmt.Printf("error reading message: %v\n", err)
 		return
 	}
+
+	mapping := make(map[string]string)
+	for _, h := range m.Headers {
+		mapping[h.Key] = string(h.Value)
+	}
+	ctx = pk.Extract(ctx, mapping)
+	ctx, span := otel.Tracer("cart").Start(ctx, "kafka - consume - checkout.processed")
+	defer span.End()
 
 	var payload map[string]interface{}
 	if errUnMarshal := json.Unmarshal(m.Value, &payload); errUnMarshal != nil {

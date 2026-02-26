@@ -10,6 +10,8 @@ import (
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
 	paymentpb "github.com/fjod/go_cart/payment-service/pkg/proto"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	t "go.opentelemetry.io/otel/trace"
 )
 
 func (s *CheckoutServiceImpl) InitiateCheckout(
@@ -51,9 +53,15 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 		Currency:               snapshot.Currency,
 	}
 
+	var span t.Span
+	ctx, span = s.tracer.Start(ctx, "checkout_reserved")
+	span.SetAttributes(attribute.String("IdempotencyKey", request.IdempotencyKey))
+
 	if err := s.repo.CreateCheckoutSession(ctx, session); err != nil {
 		return nil, fmt.Errorf("failed to create checkout session: %w", err)
 	}
+
+	span.End()
 
 	reserveStatus := d.CheckoutStatusInitiated
 	items := mapItemsToItemPointers(snapshot.Items)

@@ -3,12 +3,15 @@ package publisher
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	pk "github.com/fjod/go_cart/pkg/tracing"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
 )
 
 type OutboxPoller struct {
@@ -110,14 +113,22 @@ func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
 }
 
 func (p *OutboxPoller) publishToKafka(ctx context.Context, event *r.OutboxEvent) error {
-	msg := kafka.Message{
-		Key:   []byte(event.AggregateId), // checkout_id for ordering
-		Value: event.Payload,             // Already JSON from database
-		Headers: []kafka.Header{
-			{Key: "event_type", Value: []byte(event.EventType)},
-		},
+	messageName := "checkout.processed"
+	tr := otel.Tracer("kafka")
+	spanCtx, messageSpan := tr.Start(ctx, fmt.Sprintf("kafka - publish - %s", messageName))
+	defer messageSpan.End()
+
+	headers := []kafka.Header{
+		{Key: "event_type", Value: []byte(event.EventType)},
+	}
+	for k, v := range pk.Inject(spanCtx) {
+		headers = append(headers, kafka.Header{Key: k, Value: []byte(v)})
 	}
 
-	err := p.writer.WriteMessages(ctx, msg)
-	return err
+	msg := kafka.Message{
+		Key:     []byte(event.AggregateId),
+		Value:   event.Payload,
+		Headers: headers,
+	}
+	return p.writer.WriteMessages(ctx, msg)
 }

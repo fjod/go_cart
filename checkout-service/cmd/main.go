@@ -81,6 +81,12 @@ func main() {
 	}
 	log.Println("Database migrations completed")
 
+	shutdown, err := tracing.InitTracer("checkout-service", "localhost:4317")
+	if err != nil {
+		log.Fatal("failed to init tracer", err)
+	}
+	defer shutdown(context.Background())
+
 	kafkaPort := getEnv("KAFKA_PORT", "localhost:9092")
 	poller := pub.NewOutboxPoller(repo, kafkaPort)
 	pollerCtx, pollerCancel := context.WithCancel(context.Background())
@@ -155,11 +161,6 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	shutdown, err := tracing.InitTracer("checkout-service", "localhost:4317")
-	if err != nil {
-		log.Fatal("failed to init tracer", err)
-	}
-	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)

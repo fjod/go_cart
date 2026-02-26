@@ -5,6 +5,8 @@ import (
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
+	"go.opentelemetry.io/otel"
+	t "go.opentelemetry.io/otel/trace"
 )
 
 type CheckoutService interface {
@@ -17,6 +19,7 @@ type CheckoutServiceImpl struct {
 	product   *ProductHandler
 	inventory *InventoryHandler
 	payment   *PaymentHandler
+	tracer    t.Tracer
 }
 
 func NewCheckoutService(
@@ -32,5 +35,6 @@ func NewCheckoutService(
 		product:   product,
 		inventory: inventory,
 		payment:   payment,
+		tracer:    otel.Tracer("checkout"),
 	}
 }

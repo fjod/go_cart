@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A distributed e-commerce platform in Go with microservices architecture for learning purposes.
 
-**Current Phase:** Phase 4 (Integration & Polish) - Not Started
+**Current Phase:** Phase 4 (Integration & Polish) - In Progress 🔄
 **Completed:** Phase 1 (Foundation) ✅ | Phase 2 (Checkout Orchestration) ✅ | Phase 3 (Order Processing) ✅
 
 ## Services Running
@@ -190,13 +190,22 @@ service/
 - Orders Service: Kafka consumer + PostgreSQL persistence + gRPC query API (GetOrder, ListOrders)
 - Idempotent event processing via `checkout_id` UNIQUE constraint
 
-### Phase 4: Integration & Polish ❌ Not Started
-- Distributed tracing (OpenTelemetry)
-- Real JWT authentication (replace MockAuthMiddleware)
-- Rate limiting middleware
-- Circuit breakers
-- Structured logging
-- End-to-end observability
+### Phase 4: Integration & Polish 🔄 In Progress
+
+#### Distributed Tracing (OpenTelemetry) ✅ Partially Complete
+- `pkg/tracing/propagation.go` — shared `KafkaHeaderCarrier` (W3C TextMapCarrier) for trace context over Kafka headers
+- Checkout Service: tracer injected into `CheckoutServiceImpl`, span `checkout_reserved` on session creation
+- Checkout Outbox Poller: span `kafka - publish - checkout.processed` with header injection
+- Cart Poller: extracts trace context from Kafka headers, span `kafka - consume - checkout.processed`
+- gRPC server: `otelgrpc.NewServerHandler()` for automatic gRPC span propagation
+- `InitTracer("checkout-service", "localhost:4317")` initialized before poller startup
+
+#### Remaining Phase 4 Items
+- ❌ Real JWT authentication (replace MockAuthMiddleware)
+- ❌ Rate limiting middleware
+- ❌ Circuit breakers
+- ❌ Structured logging (replace fmt.Printf with slog/zap)
+- ❌ Tracing for remaining services (Cart, Orders, API Gateway, Product, Inventory, Payment)
 
 ## Known Issues
 
@@ -206,8 +215,8 @@ service/
 
 ## Next Priorities
 
-1. Replace MockAuthMiddleware with real JWT validation
-2. Add distributed tracing (OpenTelemetry)
+1. Extend tracing to remaining services (Cart, Orders, API Gateway, Product, Inventory, Payment)
+2. Replace MockAuthMiddleware with real JWT validation
 3. Add rate limiting middleware to API Gateway
 4. Implement circuit breakers for backend service calls
 5. Add structured logging (replace fmt.Printf with slog/zap)
