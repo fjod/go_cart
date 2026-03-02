@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
@@ -20,16 +20,17 @@ type OutboxPoller struct {
 	recoveryTick time.Duration
 	repo         r.RepoInterface
 	writer       *kafka.Writer
+	logger       *slog.Logger
 }
 
-func NewOutboxPoller(repo r.RepoInterface, brokers ...string) *OutboxPoller {
+func NewOutboxPoller(repo r.RepoInterface, log *slog.Logger, brokers ...string) *OutboxPoller {
 	w := &kafka.Writer{
 		Addr:                   kafka.TCP(brokers...),
 		Topic:                  "checkout-outbox",
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true,
 	}
-	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo, w}
+	return &OutboxPoller{time.Second * 5, time.Second, time.Second * 5, repo, w, log}
 }
 
 func (p *OutboxPoller) Run(ctx context.Context) {
@@ -52,20 +53,20 @@ func (p *OutboxPoller) Run(ctx context.Context) {
 func (p *OutboxPoller) processUnpublishedEvents(ctx context.Context) {
 	events, err := p.repo.GetUnprocessedEvents(ctx, 100)
 	if err != nil {
-		log.Printf("failed to fetch events %v", err)
+		p.logger.Error("failed to fetch unprocessed events", "error", err)
 		return
 	}
 
 	for _, event := range events {
 		errPublish := p.publishToKafka(ctx, event)
 		if errPublish != nil {
-			log.Printf("failed to publish event id = %v with error %v", event.ID, errPublish)
+			p.logger.Error("failed to publish event", "event_id", event.ID, "error", errPublish)
 			continue
 		}
 
 		errMark := p.repo.MarkEventAsProcessed(ctx, event.ID)
 		if errMark != nil {
-			log.Printf("failed to mark event  as processed id = %v with error %v", event.ID, errMark)
+			p.logger.Error("failed to mark event as processed", "event_id", event.ID, "error", errMark)
 			continue
 		}
 	}
@@ -75,15 +76,15 @@ func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
 	// stuck session is when the checkout status is PAYMENT_COMPLETED but there is no outbox event for it.
 	sessions, err := p.repo.GetStuckSessions(ctx)
 	if err != nil {
-		log.Printf("failed to get stuck sessions: %v", err)
+		p.logger.Error("failed to get stuck sessions", "error", err)
 		return
 	}
 	for _, session := range sessions {
-		log.Printf("recovering stuck session: %v", session.ID)
+		p.logger.Info("recovering stuck session", "session_id", session.ID)
 
 		var s d.CartSnapshot
 		if err := json.Unmarshal(session.CartSnapshot, &s); err != nil {
-			log.Printf("failed to unmarshal cart snapshot for session %v: %v", session.ID, err)
+			p.logger.Error("failed to unmarshal cart snapshot", "session_id", session.ID, "error", err)
 			continue
 		}
 
@@ -98,17 +99,18 @@ func (p *OutboxPoller) recoverStuckSessions(ctx context.Context) {
 
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
-			log.Printf("failed to marshal checkout payload in poller: %v", err)
+			p.logger.Error("failed to marshal checkout payload", "session_id", session.ID, "error", err)
 			continue
 		}
 
 		completedStatus := d.CheckoutStatusCompleted
 		err = p.repo.CompleteCheckoutSession(ctx, &session.ID, payloadJSON, &completedStatus)
 		if err != nil {
-			log.Printf("failed to complete checkout in poller: %v", err)
+			p.logger.Error("failed to complete checkout in recovery", "session_id", session.ID, "error", err)
+			continue
 		}
 
-		log.Printf("session recovered: %v", session.ID)
+		p.logger.Info("session recovered", "session_id", session.ID)
 	}
 }
 

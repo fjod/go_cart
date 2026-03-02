@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -17,6 +16,7 @@ import (
 	"github.com/fjod/go_cart/cart-service/internal/repository"
 	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/logger"
 	"github.com/fjod/go_cart/pkg/tracing"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"github.com/redis/go-redis/v9"
@@ -27,6 +27,8 @@ import (
 )
 
 func main() {
+	log := logger.New("cart-service", "info")
+
 	// Configuration
 	cartServicePort := getEnv("CART_SERVICE_PORT", "50052")
 	productServiceAddr := getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051")
@@ -37,12 +39,13 @@ func main() {
 	ctx := context.Background()
 	mongoDB, err := repository.ConnectMongoDB(ctx, mongoURI, mongoDBName)
 	if err != nil {
-		log.Fatalf("Failed to connect to MongoDB: %v", err)
+		log.Error("failed to connect to MongoDB", "error", err)
+		os.Exit(1)
 	}
 
 	// Create repository
 	repo := repository.NewMongoRepository(mongoDB)
-	log.Printf("Connected to MongoDB at %s", mongoURI)
+	log.Info("connected to MongoDB", "uri", mongoURI)
 
 	// Set up gRPC connection to Product Service
 	productConn, err := grpc.NewClient(
@@ -50,12 +53,13 @@ func main() {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
-		log.Fatalf("Failed to connect to product service: %v", err)
+		log.Error("failed to connect to product service", "addr", productServiceAddr, "error", err)
+		os.Exit(1)
 	}
 	defer productConn.Close()
 
 	productClient := productpb.NewProductServiceClient(productConn)
-	log.Printf("Connected to product service at %s", productServiceAddr)
+	log.Info("connected to product service", "addr", productServiceAddr)
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
@@ -64,23 +68,26 @@ func main() {
 	})
 	defer redisClient.Close()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatal("Redis connection failed:", err)
+		log.Error("redis connection failed", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Redis ping succeeded")
+	log.Info("redis ping succeeded")
 
 	cache := c.NewRedisCache(redisClient)
-	service := s.NewCartService(repo, cache)
-	cartServer := cartgrpc.NewCartServiceServer(service, productClient)
+	service := s.NewCartService(repo, cache, log)
+	cartServer := cartgrpc.NewCartServiceServer(service, productClient, log)
 
 	// Set up gRPC server for cart service
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cartServicePort))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Error("failed to listen", "port", cartServicePort, "error", err)
+		os.Exit(1)
 	}
 
 	shutdown, err := tracing.InitTracer("cart-service", "localhost:4317")
 	if err != nil {
-		log.Fatal("failed to init tracer", err)
+		log.Error("failed to init tracer", "error", err)
+		os.Exit(1)
 	}
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
@@ -92,7 +99,7 @@ func main() {
 	reflection.Register(grpcServer)
 
 	kafkaPort := getEnv("KAFKA_ADDR", "localhost:9092")
-	poller := poller2.NewPoller(repo, cache, kafkaPort)
+	poller := poller2.NewPoller(repo, cache, log, kafkaPort)
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	pollerCtx, pollerCancel := context.WithCancel(ctx)
@@ -109,9 +116,10 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		log.Printf("Cart service listening on port %s", cartServicePort)
+		log.Info("cart service listening", "port", cartServicePort)
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			log.Error("failed to serve gRPC", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -120,7 +128,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down cart service...")
+	log.Info("shutting down cart service")
 	grpcServer.GracefulStop()
 	pollerCancel()
 
@@ -131,12 +139,12 @@ func main() {
 	poller.Close()
 	select {
 	case <-chWait:
-		log.Println("Poller service stopped")
+		log.Info("poller stopped")
 	case <-timeoutCtx.Done():
-		log.Println("Poller didn't stop in time")
+		log.Warn("poller did not stop within timeout")
 	}
 
-	log.Println("Cart service stopped")
+	log.Info("cart service stopped")
 }
 
 func getEnv(key, defaultValue string) string {

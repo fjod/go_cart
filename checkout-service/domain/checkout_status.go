@@ -45,7 +45,7 @@ func CanTransitionTo(current, next CheckoutStatus) bool {
 	return allowedNextStates[next]
 }
 
-// String representation (for logging)
+// String representation (for logger)
 func (s CheckoutStatus) String() string {
 	return string(s)
 }

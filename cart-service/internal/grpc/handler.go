@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/fjod/go_cart/cart-service/internal/domain"
 	"github.com/fjod/go_cart/cart-service/internal/repository"
 	s "github.com/fjod/go_cart/cart-service/internal/service"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/logger"
 	productpb "github.com/fjod/go_cart/product-service/pkg/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,12 +23,14 @@ type CartServiceServer struct {
 	pb.UnimplementedCartServiceServer
 	service       *s.CartService
 	productClient productpb.ProductServiceClient
+	logger        *slog.Logger
 }
 
-func NewCartServiceServer(service *s.CartService, productClient productpb.ProductServiceClient) *CartServiceServer {
+func NewCartServiceServer(service *s.CartService, productClient productpb.ProductServiceClient, logger *slog.Logger) *CartServiceServer {
 	return &CartServiceServer{
 		service:       service,
 		productClient: productClient,
+		logger:        logger,
 	}
 }
 
@@ -54,7 +58,11 @@ func (s *CartServiceServer) GetCart(
 	ctx context.Context,
 	req *pb.GetCartRequest) (*pb.CartResponse, error) {
 
+	log := logger.WithContext(s.logger, ctx)
+	log.Info("get cart", slog.Int64("user_id", req.UserId))
+
 	if req.UserId <= 0 {
+		log.Warn("invalid user_id: must be greater than 0", slog.Int64("user_id", req.UserId))
 		return nil, status.Error(codes.InvalidArgument, "user_id must be greater than 0")
 	}
 
@@ -75,6 +83,9 @@ func (s *CartServiceServer) AddItem(
 	ctx context.Context,
 	req *pb.AddCartItemRequest) (*pb.CartResponse, error) {
 
+	log := logger.WithContext(s.logger, ctx)
+	log.Info("adding item", slog.String("product_id", fmt.Sprintf("%d", req.ProductId)))
+
 	// Validate input
 	if req.ProductId <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "product_id must be greater than 0")
@@ -94,9 +105,11 @@ func (s *CartServiceServer) AddItem(
 		// Check if product not found
 		if st, ok := status.FromError(err); ok {
 			if st.Code() == codes.NotFound {
+				log.Error("product not found", slog.String("product_id", fmt.Sprintf("%d", req.ProductId)))
 				return nil, status.Error(codes.NotFound, "product not found")
 			}
 		}
+		log.Error("failed to validate product", slog.String("product_id", fmt.Sprintf("%d", req.ProductId)))
 		return nil, status.Errorf(codes.Internal, "failed to validate product: %v", err)
 	}
 
@@ -133,6 +146,9 @@ func (s *CartServiceServer) UpdateQuantity(
 	ctx context.Context,
 	req *pb.UpdateQuantityRequest) (*pb.CartResponse, error) {
 
+	log := logger.WithContext(s.logger, ctx)
+	log.Info("update quantity", slog.String("product_id", fmt.Sprintf("%d", req.ProductId)))
+
 	// Validate input
 	if req.UserId <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id must be greater than 0")
@@ -151,6 +167,7 @@ func (s *CartServiceServer) UpdateQuantity(
 	if err != nil {
 		// Check if item was not found in cart
 		if errors.Is(err, repository.ErrItemNotFound) {
+			log.Warn("item not found in cart", slog.Int64("product_id", req.ProductId))
 			return nil, status.Error(codes.NotFound, "item not found in cart")
 		}
 		return nil, status.Errorf(codes.Internal, "failed to update item quantity: %v", err)
@@ -172,6 +189,9 @@ func (s *CartServiceServer) UpdateQuantity(
 func (s *CartServiceServer) RemoveItem(
 	ctx context.Context,
 	req *pb.RemoveItemRequest) (*pb.CartResponse, error) {
+
+	log := logger.WithContext(s.logger, ctx)
+	log.Info("remove item", slog.String("product_id", fmt.Sprintf("%d", req.ProductId)))
 
 	// Validate input
 	if req.UserId <= 0 {
@@ -205,6 +225,9 @@ func (s *CartServiceServer) RemoveItem(
 func (s *CartServiceServer) ClearCart(
 	ctx context.Context,
 	req *pb.ClearCartRequest) (*pb.CartResponse, error) {
+
+	log := logger.WithContext(s.logger, ctx)
+	log.Info("clear cart", slog.String("user_id", fmt.Sprintf("%d", req.UserId)))
 
 	// Validate input
 	if req.UserId <= 0 {

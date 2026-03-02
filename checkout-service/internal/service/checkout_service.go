@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
@@ -27,7 +26,11 @@ func (s *CheckoutServiceImpl) InitiateCheckout(
 	if existingSessionId != nil {
 		// This checkout already exists!
 		// Return the cached result (could be COMPLETED, FAILED, or IN_PROGRESS)
-		log.Printf("Duplicate request detected idempotency_key = %v with checkout_id = %v and status = %v", request.IdempotencyKey, *existingSessionId, status)
+		s.logger.Info("duplicate checkout request, returning cached result",
+			"idempotency_key", request.IdempotencyKey,
+			"checkout_id", *existingSessionId,
+			"status", status,
+		)
 
 		return &d.CheckoutResponse{
 			CheckoutID: existingSessionId,

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -12,13 +12,13 @@ import (
 	inventorygrpc "github.com/fjod/go_cart/inventory-service/internal/grpc"
 	"github.com/fjod/go_cart/inventory-service/internal/store"
 	pb "github.com/fjod/go_cart/inventory-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/logger"
 	"github.com/fjod/go_cart/pkg/tracing"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
-// Initial stock levels matching product-service seeds
 var initialStock = map[int64]int32{
 	1: 100, // Laptop
 	2: 500, // Mouse
@@ -28,60 +28,60 @@ var initialStock = map[int64]int32{
 }
 
 func main() {
+	log := logger.New("inventory-service", "info")
+	slog.SetDefault(log)
+
 	port := getEnv("INVENTORY_SERVICE_PORT", "50053")
 
-	// Create in-memory store
 	memStore := store.NewMemoryStore()
 
-	// Initialize stock levels
 	for productID, quantity := range initialStock {
 		if err := memStore.SetStock(productID, quantity); err != nil {
-			log.Fatalf("Failed to set initial stock for product %d: %v", productID, err)
+			log.Error("failed to set initial stock", "product_id", productID, "error", err)
+			os.Exit(1)
 		}
 	}
-	log.Printf("Initialized stock for %d products", len(initialStock))
+	log.Info("initialized stock", "product_count", len(initialStock))
 
-	// Create gRPC server
 	server := inventorygrpc.NewInventoryServiceServer(memStore)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Error("failed to listen", "port", port, "error", err)
+		os.Exit(1)
 	}
 
 	shutdown, err := tracing.InitTracer("inventory-service", "localhost:4317")
 	if err != nil {
-		log.Fatal("failed to init tracer", err)
+		log.Error("failed to init tracer", "error", err)
+		os.Exit(1)
 	}
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 	pb.RegisterInventoryServiceServer(grpcServer, server)
-
-	// Enable reflection for grpcurl/grpcui
 	reflection.Register(grpcServer)
 
-	// Start server in goroutine
 	go func() {
-		log.Printf("Inventory service listening on port %s", port)
+		log.Info("inventory service listening", "port", port)
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			log.Error("failed to serve gRPC", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down inventory service...")
+	log.Info("shutting down inventory service")
 	grpcServer.GracefulStop()
-	err = memStore.Close()
-	if err != nil {
-		log.Fatalf("Failed to stop memstore: %v", err)
+	if err = memStore.Close(); err != nil {
+		log.Error("failed to stop memstore", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Inventory service stopped")
+	log.Info("inventory service stopped")
 }
 
 func getEnv(key, defaultValue string) string {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
 
 	"github.com/fjod/go_cart/orders-service/internal/domain"
 	"github.com/fjod/go_cart/orders-service/internal/repository"
@@ -33,9 +33,10 @@ type CheckoutCompletedEvent struct {
 type Consumer struct {
 	repo   repository.OrderRepository
 	reader *kafka.Reader
+	logger *slog.Logger
 }
 
-func NewConsumer(repo repository.OrderRepository, brokers ...string) *Consumer {
+func NewConsumer(repo repository.OrderRepository, log *slog.Logger, brokers ...string) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
 		Topic:       "checkout-outbox",
@@ -43,7 +44,7 @@ func NewConsumer(repo repository.OrderRepository, brokers ...string) *Consumer {
 		MaxBytes:    10e6, // 10MB
 		StartOffset: kafka.FirstOffset,
 	})
-	return &Consumer{repo, reader}
+	return &Consumer{repo, reader, log}
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -58,7 +59,7 @@ func (c *Consumer) Run(ctx context.Context) {
 func (c *Consumer) Close() {
 	err := c.reader.Close()
 	if err != nil {
-		fmt.Printf("error closing kafka reader: %v\n", err)
+		c.logger.Error("error closing kafka reader", "error", err)
 	}
 }
 
@@ -68,19 +69,19 @@ func (c *Consumer) processMessage(ctx context.Context) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		fmt.Printf("error reading message: %v\n", err)
+		c.logger.Error("error reading kafka message", "error", err)
 		return
 	}
 
 	var event CheckoutCompletedEvent
 	if err := json.Unmarshal(m.Value, &event); err != nil {
-		fmt.Printf("error parsing message: %v\n", err)
+		c.logger.Error("error parsing kafka message payload", "error", err)
 		return
 	}
 
 	checkoutID, err := uuid.Parse(event.CheckoutID)
 	if err != nil {
-		fmt.Printf("invalid checkout_id %q: %v\n", event.CheckoutID, err)
+		c.logger.Error("invalid checkout_id in event", "checkout_id", event.CheckoutID, "error", err)
 		return
 	}
 
@@ -111,12 +112,12 @@ func (c *Consumer) processMessage(ctx context.Context) {
 
 	if err := c.repo.CreateOrder(ctx, order); err != nil {
 		if errors.Is(err, repository.ErrDuplicateCheckout) {
-			fmt.Printf("order for checkout %s already exists, skipping\n", event.CheckoutID)
+			c.logger.Info("order already exists, skipping duplicate", "checkout_id", event.CheckoutID)
 			return
 		}
-		fmt.Printf("failed to create order for checkout %s: %v\n", event.CheckoutID, err)
+		c.logger.Error("failed to create order", "checkout_id", event.CheckoutID, "error", err)
 		return
 	}
 
-	fmt.Printf("order %s created for checkout %s\n", order.ID, order.CheckoutID)
+	c.logger.Info("order created", "order_id", order.ID, "checkout_id", order.CheckoutID)
 }

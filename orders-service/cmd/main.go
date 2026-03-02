@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -16,6 +16,7 @@ import (
 	ordersgrpc "github.com/fjod/go_cart/orders-service/internal/grpc"
 	"github.com/fjod/go_cart/orders-service/internal/repository"
 	pb "github.com/fjod/go_cart/orders-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/logger"
 	"github.com/fjod/go_cart/pkg/tracing"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 
@@ -31,14 +32,15 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
-	log.Println("orders-service starting...")
+	log := logger.New("orders-service", "info")
+	slog.SetDefault(log)
+
+	log.Info("orders-service starting")
 	var wg sync.WaitGroup
 
-	// Configuration
 	grpcPort := getEnv("GRPC_PORT", "50055")
 	kafkaBrokers := getEnv("KAFKA_BROKERS", "localhost:9092")
 
-	// Database setup
 	dbHost := getEnv("DB_HOST", "localhost")
 	dbPort := getEnv("DB_PORT", "5432")
 	dbUser := getEnv("DB_USER", "postgres")
@@ -48,7 +50,8 @@ func main() {
 
 	port, err := strconv.Atoi(dbPort)
 	if err != nil {
-		log.Fatalf("Invalid DB_PORT: %v", err)
+		log.Error("invalid DB_PORT", "value", dbPort, "error", err)
+		os.Exit(1)
 	}
 
 	creds := &repository.Credentials{
@@ -62,17 +65,19 @@ func main() {
 
 	repo, err := repository.NewRepository(creds)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer repo.Close()
+	log.Info("connected to postgres", "host", dbHost, "db", dbName)
 
 	if err := repo.RunMigrations(creds); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		log.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Database migrations completed")
+	log.Info("database migrations completed")
 
-	// Start Kafka consumer
-	kafkaConsumer := consumer.NewConsumer(repo, kafkaBrokers)
+	kafkaConsumer := consumer.NewConsumer(repo, log, kafkaBrokers)
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	wg.Add(1)
 	go func() {
@@ -80,17 +85,18 @@ func main() {
 		kafkaConsumer.Run(consumerCtx)
 	}()
 
-	// Start gRPC server
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", grpcPort))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Error("failed to listen", "port", grpcPort, "error", err)
+		os.Exit(1)
 	}
 
 	ordersHandler := ordersgrpc.NewOrdersHandler(repo)
 
 	shutdown, err := tracing.InitTracer("orders-service", "localhost:4317")
 	if err != nil {
-		log.Fatal("failed to init tracer", err)
+		log.Error("failed to init tracer", "error", err)
+		os.Exit(1)
 	}
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
@@ -101,18 +107,18 @@ func main() {
 	reflection.Register(grpcServer)
 
 	go func() {
-		log.Printf("Orders service listening on :%s", grpcPort)
+		log.Info("orders service listening", "port", grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			log.Error("failed to serve gRPC", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down orders service...")
+	log.Info("shutting down orders service")
 	grpcServer.GracefulStop()
 	consumerCancel()
 
@@ -127,11 +133,11 @@ func main() {
 
 	select {
 	case <-doneChan:
-		log.Println("Consumer stopped cleanly")
+		log.Info("consumer stopped cleanly")
 	case <-shutdownCtx.Done():
-		log.Println("Consumer didn't stop in time")
+		log.Warn("consumer did not stop within timeout")
 	}
 
 	kafkaConsumer.Close()
-	log.Println("Orders service stopped")
+	log.Info("orders service stopped")
 }

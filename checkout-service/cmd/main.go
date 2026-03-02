@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -17,6 +17,7 @@ import (
 	"github.com/fjod/go_cart/checkout-service/internal/repository"
 	"github.com/fjod/go_cart/checkout-service/internal/service"
 	pb "github.com/fjod/go_cart/checkout-service/pkg/proto"
+	"github.com/fjod/go_cart/pkg/logger"
 	"github.com/fjod/go_cart/pkg/tracing"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 
@@ -38,9 +39,12 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
-	log.Println("checkout-service starting...")
+	log := logger.New("checkout-service", "info")
+	slog.SetDefault(log)
+
+	log.Info("checkout-service starting")
 	var wg sync.WaitGroup
-	// Configuration
+
 	grpcPort := getEnv("GRPC_PORT", "50056")
 	cartServiceAddr := getEnv("CART_SERVICE_ADDR", "localhost:50052")
 	productServiceAddr := getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051")
@@ -48,7 +52,6 @@ func main() {
 	paymentServiceAddr := getEnv("PAYMENT_SERVICE_ADDR", "localhost:50054")
 	requestTimeout := 5 * time.Second
 
-	// Database setup
 	dbHost := getEnv("DB_HOST", "localhost")
 	dbPort := getEnv("DB_PORT", "5432")
 	dbUser := getEnv("DB_USER", "postgres")
@@ -58,7 +61,8 @@ func main() {
 
 	port, err := strconv.Atoi(dbPort)
 	if err != nil {
-		log.Fatalf("Invalid DB_PORT: %v", err)
+		log.Error("invalid DB_PORT", "value", dbPort, "error", err)
+		os.Exit(1)
 	}
 
 	creds := &repository.Credentials{
@@ -72,23 +76,27 @@ func main() {
 
 	repo, err := repository.NewRepository(creds)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer repo.Close()
+	log.Info("connected to postgres", "host", dbHost, "db", dbName)
 
 	if err := repo.RunMigrations(creds); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		log.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Database migrations completed")
+	log.Info("database migrations completed")
 
 	shutdown, err := tracing.InitTracer("checkout-service", "localhost:4317")
 	if err != nil {
-		log.Fatal("failed to init tracer", err)
+		log.Error("failed to init tracer", "error", err)
+		os.Exit(1)
 	}
 	defer shutdown(context.Background())
 
 	kafkaPort := getEnv("KAFKA_PORT", "localhost:9092")
-	poller := pub.NewOutboxPoller(repo, kafkaPort)
+	poller := pub.NewOutboxPoller(repo, log, kafkaPort)
 	pollerCtx, pollerCancel := context.WithCancel(context.Background())
 	wg.Add(1)
 	go func() {
@@ -96,69 +104,70 @@ func main() {
 		poller.Run(pollerCtx)
 	}()
 
-	// Create gRPC client connections
 	cartConn, err := grpc.NewClient(cartServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
-		log.Fatalf("Failed to connect to cart service: %v", err)
+		log.Error("failed to connect to cart service", "addr", cartServiceAddr, "error", err)
+		os.Exit(1)
 	}
 	defer cartConn.Close()
 	cartClient := cartpb.NewCartServiceClient(cartConn)
-	log.Printf("Connected to cart service at %s", cartServiceAddr)
+	log.Info("connected to cart service", "addr", cartServiceAddr)
 
 	productConn, err := grpc.NewClient(productServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
-		log.Fatalf("Failed to connect to product service: %v", err)
+		log.Error("failed to connect to product service", "addr", productServiceAddr, "error", err)
+		os.Exit(1)
 	}
 	defer productConn.Close()
 	productClient := productpb.NewProductServiceClient(productConn)
-	log.Printf("Connected to product service at %s", productServiceAddr)
+	log.Info("connected to product service", "addr", productServiceAddr)
 
 	inventoryConn, err := grpc.NewClient(inventoryServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
-		log.Fatalf("Failed to connect to inventory service: %v", err)
+		log.Error("failed to connect to inventory service", "addr", inventoryServiceAddr, "error", err)
+		os.Exit(1)
 	}
 	defer inventoryConn.Close()
 	inventoryClient := inventorypb.NewInventoryServiceClient(inventoryConn)
-	log.Printf("Connected to inventory service at %s", inventoryServiceAddr)
+	log.Info("connected to inventory service", "addr", inventoryServiceAddr)
 
 	paymentConn, err := grpc.NewClient(paymentServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
-		log.Fatalf("Failed to connect to payment service: %v", err)
+		log.Error("failed to connect to payment service", "addr", paymentServiceAddr, "error", err)
+		os.Exit(1)
 	}
 	defer paymentConn.Close()
 	paymentClient := paymentpb.NewPaymentServiceClient(paymentConn)
-	log.Printf("Connected to payment service at %s", paymentServiceAddr)
+	log.Info("connected to payment service", "addr", paymentServiceAddr)
 
-	// Create handler wrappers
 	cartHandler := service.NewCartHandler(cartClient, requestTimeout)
 	productHandler := service.NewProductHandler(productClient, requestTimeout)
 	inventoryHandler := service.NewInventoryHandler(inventoryClient, requestTimeout)
 	paymentHandler := service.NewPaymentHandler(paymentClient, requestTimeout)
 
-	// Instantiate checkout service
 	checkoutService := service.NewCheckoutService(
 		repo,
 		cartHandler,
 		productHandler,
 		inventoryHandler,
 		paymentHandler,
+		log,
 	)
 
-	// Create gRPC handler
 	checkoutServer := checkoutgrpc.NewCheckoutServiceServer(checkoutService)
 
-	// Start gRPC server
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", grpcPort))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Error("failed to listen", "port", grpcPort, "error", err)
+		os.Exit(1)
 	}
 
 	grpcServer := grpc.NewServer(
@@ -168,24 +177,23 @@ func main() {
 	reflection.Register(grpcServer)
 
 	go func() {
-		log.Printf("Checkout service listening on :%s", grpcPort)
+		log.Info("checkout service listening", "port", grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			log.Error("failed to serve gRPC", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down checkout service...")
+	log.Info("shutting down checkout service")
 	grpcServer.GracefulStop()
 	pollerCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
-	// Wait for poller to finish, with timeout
 	doneChan := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -194,10 +202,10 @@ func main() {
 
 	select {
 	case <-doneChan:
-		log.Println("Poller stopped cleanly")
+		log.Info("poller stopped cleanly")
 	case <-shutdownCtx.Done():
-		log.Println("Poller didn't stop in time")
+		log.Warn("poller did not stop within timeout")
 	}
 
-	log.Println("Checkout service stopped")
+	log.Info("checkout service stopped")
 }

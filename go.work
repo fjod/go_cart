@@ -8,5 +8,6 @@ use (
 	./orders-service
 	./payment-service
 	./pkg/tracing
+	./pkg/logger
 	./product-service
 )

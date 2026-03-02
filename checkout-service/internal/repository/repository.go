@@ -94,7 +94,6 @@ func NewRepository(cred *Credentials) (*Repository, error) {
 
 	db.SetMaxOpenConns(100)
 	db.SetMaxIdleConns(10)
-	fmt.Println("Connected to postgres!")
 	return &Repository{db: db}, nil
 }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 
 	d "github.com/fjod/go_cart/checkout-service/domain"
 	r "github.com/fjod/go_cart/checkout-service/internal/repository"
@@ -20,6 +21,7 @@ type CheckoutServiceImpl struct {
 	inventory *InventoryHandler
 	payment   *PaymentHandler
 	tracer    t.Tracer
+	logger    *slog.Logger
 }
 
 func NewCheckoutService(
@@ -28,6 +30,7 @@ func NewCheckoutService(
 	product *ProductHandler,
 	inventory *InventoryHandler,
 	payment *PaymentHandler,
+	log *slog.Logger,
 ) *CheckoutServiceImpl {
 	return &CheckoutServiceImpl{
 		repo:      repo,
@@ -36,5 +39,6 @@ func NewCheckoutService(
 		inventory: inventory,
 		payment:   payment,
 		tracer:    otel.Tracer("checkout"),
+		logger:    log,
 	}
 }

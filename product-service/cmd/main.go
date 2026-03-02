@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 
+	"github.com/fjod/go_cart/pkg/logger"
 	"github.com/fjod/go_cart/pkg/tracing"
 	grpcHandler "github.com/fjod/go_cart/product-service/internal/grpc"
 	repository "github.com/fjod/go_cart/product-service/internal/repository"
@@ -23,49 +24,47 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
-	log.Println("Product-service started")
+	log := logger.New("product-service", "info")
+	slog.SetDefault(log)
 
-	// Use environment variables with sensible defaults
 	dbPath := getEnv("DB_PATH", "./internal/repository/products.db")
 	migrationsPath := getEnv("MIGRATIONS_PATH", "./internal/repository/migrations")
 
 	repo, err := repository.NewRepository(dbPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Error("failed to open repository", "error", err)
+		os.Exit(1)
 	}
 	defer repo.Close()
 
-	// Run migrations
 	if err := repo.RunMigrations(migrationsPath); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		log.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
+	log.Info("migrations completed successfully")
 
-	log.Println("Migrations completed successfully")
-
-	// Create gRPC server
 	shutdown, err := tracing.InitTracer("product-service", "localhost:4317")
 	if err != nil {
-		log.Fatal("failed to init tracer", err)
+		log.Error("failed to init tracer", "error", err)
+		os.Exit(1)
 	}
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 
-	// Register product service
 	productService := grpcHandler.NewProductServiceServer(repo)
 	pb.RegisterProductServiceServer(grpcServer, productService)
-
-	// Enable reflection for grpcurl/grpcui
 	reflection.Register(grpcServer)
 
-	// Start listening
 	port := getEnv("GRPC_PORT", ":50051")
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Error("failed to listen", "port", port, "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Product service listening on %s", port)
+	log.Info("product service listening", "port", port)
 	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		log.Error("failed to serve gRPC", "error", err)
+		os.Exit(1)
 	}
 }
