@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -250,7 +251,7 @@ func TestRecoveringStuckSession(t *testing.T) {
 		StuckSessions: sessions,
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 	poller.recoverStuckSessions(context.Background())
 	require.Equal(t, "checkout-id-1", *mockRepo.OutboxId)
 }
@@ -261,7 +262,7 @@ func TestRecoveringStuckSession_GetStuckSessionsError(t *testing.T) {
 		GetStuckSessionsErr: errors.New("database connection error"),
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 
 	// Should not panic, just log error and return
 	poller.recoverStuckSessions(context.Background())
@@ -276,7 +277,7 @@ func TestRecoveringStuckSession_EmptySessionsList(t *testing.T) {
 		StuckSessions: []*r.CheckoutSession{}, // Empty list
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 
 	// Should not panic, just return without doing anything
 	poller.recoverStuckSessions(context.Background())
@@ -300,7 +301,7 @@ func TestRecoveringStuckSession_InvalidCartSnapshot(t *testing.T) {
 		StuckSessions: []*r.CheckoutSession{session},
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 
 	// Should not panic - should log error and skip this session
 	poller.recoverStuckSessions(context.Background())
@@ -336,7 +337,7 @@ func TestRecoveringStuckSession_CompleteCheckoutError(t *testing.T) {
 		CompleteCheckoutErr: errors.New("database deadlock"),
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 
 	// Should NOT exit the process - should log error and continue
 	poller.recoverStuckSessions(context.Background())
@@ -395,7 +396,7 @@ func TestRecoveringStuckSession_MultipleSessionsWithPartialFailures(t *testing.T
 		CompletedCheckoutIDs: []string{},
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 	poller.recoverStuckSessions(context.Background())
 
 	// ✅ FIXED: Error handling now works correctly
@@ -417,7 +418,7 @@ func TestRecoveringStuckSession_NilSessionsList(t *testing.T) {
 		StuckSessions: nil, // Nil instead of empty slice
 	}
 
-	poller := NewOutboxPoller(mockRepo)
+	poller := NewOutboxPoller(mockRepo, slog.Default())
 
 	// Should not panic
 	poller.recoverStuckSessions(context.Background())

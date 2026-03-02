@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -124,7 +125,7 @@ func TestPoller_Start(t *testing.T) {
 	topic := "checkout-outbox"
 	createTopic(t, brokers, topic)
 
-	poller := NewPoller(dbRepo, cache, brokers)
+	poller := NewPoller(dbRepo, cache, slog.Default(), brokers)
 
 	// create cart and cache it
 	dbRepo.AddItem(ctx, "123", domain.CartItem{

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	cartpb "github.com/fjod/go_cart/cart-service/pkg/proto"
@@ -192,5 +193,5 @@ func newTestCheckoutService(
 	productHandler := NewProductHandler(productClient, 5*time.Second)
 	inventoryService := NewInventoryHandler(inv, 5*time.Second)
 	payService := NewPaymentHandler(pay, 5*time.Second)
-	return NewCheckoutService(repo, cartHandler, productHandler, inventoryService, payService)
+	return NewCheckoutService(repo, cartHandler, productHandler, inventoryService, payService, slog.Default())
 }

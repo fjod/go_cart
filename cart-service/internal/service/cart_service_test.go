@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -144,7 +145,7 @@ func TestGetCart_Success(t *testing.T) {
 		cart: nil,
 	}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	ret, err := sut.GetCart(context.Background(), "123")
 	require.NoError(t, err)
 	assert.NotNil(t, ret)
@@ -170,7 +171,7 @@ func TestGetCart_RepoError(t *testing.T) {
 		cart: nil,
 	}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	ret, err := sut.GetCart(context.Background(), "123")
 	require.ErrorContains(t, err, "database error")
 	assert.Nil(t, ret)
@@ -191,7 +192,7 @@ func TestGetCart_CacheHit(t *testing.T) {
 		cart: cart, // cache has the cart
 	}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	ret, err := sut.GetCart(context.Background(), "123")
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(ret.Items))
@@ -206,7 +207,7 @@ func TestGetCart_CartNotFound_ReturnsEmptyCart(t *testing.T) {
 		cart: nil,
 	}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	ret, err := sut.GetCart(context.Background(), "123")
 	require.NoError(t, err)
 	assert.NotNil(t, ret)
@@ -224,7 +225,7 @@ func TestAddItem_Success(t *testing.T) {
 	mockRepo := &mockRepository{cart: cart}
 	mockC := &mockCache{cart: cart}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.AddItem(context.Background(), "123", domain.CartItem{
 		ProductID: 1,
 		Quantity:  5,
@@ -248,7 +249,7 @@ func TestAddItem_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{cart: nil}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.AddItem(context.Background(), "123", domain.CartItem{ProductID: 1, Quantity: 5})
 	require.ErrorContains(t, err, "database error")
 }
@@ -264,7 +265,7 @@ func TestUpdateQuantity_Success(t *testing.T) {
 	mockRepo := &mockRepository{cart: cart}
 	mockC := &mockCache{cart: cart}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.UpdateQuantity(context.Background(), "123", 1, 20)
 	require.NoError(t, err)
 	assert.Equal(t, 20, mockRepo.cart.Items[0].Quantity)
@@ -282,7 +283,7 @@ func TestUpdateQuantity_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.UpdateQuantity(context.Background(), "123", 1, 20)
 	require.ErrorContains(t, err, "database error")
 }
@@ -298,7 +299,7 @@ func TestRemoveItem_Success(t *testing.T) {
 	mockRepo := &mockRepository{cart: cart}
 	mockC := &mockCache{cart: cart}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.RemoveItem(context.Background(), "123", 1)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(mockRepo.cart.Items))
@@ -317,7 +318,7 @@ func TestRemoveItem_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.RemoveItem(context.Background(), "123", 1)
 	require.ErrorContains(t, err, "database error")
 }
@@ -333,7 +334,7 @@ func TestClearCart_Success(t *testing.T) {
 	mockRepo := &mockRepository{cart: cart}
 	mockC := &mockCache{cart: cart}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.ClearCart(context.Background(), "123")
 	require.NoError(t, err)
 	assert.Empty(t, mockRepo.cart.Items)
@@ -351,7 +352,7 @@ func TestClearCart_RepoError(t *testing.T) {
 	}
 	mockC := &mockCache{}
 
-	sut := NewCartService(mockRepo, mockC)
+	sut := NewCartService(mockRepo, mockC, slog.Default())
 	err := sut.ClearCart(context.Background(), "123")
 	require.ErrorContains(t, err, "database error")
 }

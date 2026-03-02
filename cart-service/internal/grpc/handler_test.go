@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -151,7 +152,7 @@ func createCacheAndRepo(c *domain.Cart) *s.CartService {
 	mc := &mockCache{
 		cart: c,
 	}
-	return s.NewCartService(mockRepo, mc)
+	return s.NewCartService(mockRepo, mc, slog.Default())
 }
 
 func TestGetCart_Success(t *testing.T) {
@@ -166,7 +167,7 @@ func TestGetCart_Success(t *testing.T) {
 	}
 	service := createCacheAndRepo(cart)
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 	ret, err := server.GetCart(context.Background(), &pb.GetCartRequest{
 		UserId: 123,
 	})
@@ -203,7 +204,7 @@ func TestAddItem_Success(t *testing.T) {
 		},
 	}
 
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -239,7 +240,7 @@ func TestAddItem_NotFound(t *testing.T) {
 		getProductErr: status.Error(codes.NotFound, "product not found"),
 	}
 
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -263,7 +264,7 @@ func TestUpdateQuantity_Success(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	ret, err := server.UpdateQuantity(context.Background(), &pb.UpdateQuantityRequest{
 		UserId:    123,
@@ -289,7 +290,7 @@ func TestUpdateQuantity_InvalidInput(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	tests := []struct {
 		name     string
@@ -340,7 +341,7 @@ func TestRemoveItem_Success(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	ret, err := server.RemoveItem(context.Background(), &pb.RemoveItemRequest{
 		UserId:    123,
@@ -366,7 +367,7 @@ func TestRemoveItem_InvalidInput(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	tests := []struct {
 		name     string
@@ -407,7 +408,7 @@ func TestClearCart_Success(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
 		UserId: 123,
@@ -430,7 +431,7 @@ func TestClearCart_InvalidInput(t *testing.T) {
 	service := createCacheAndRepo(cart)
 
 	mockProductClient := &mockProductServiceClient{}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	ret, err := server.ClearCart(context.Background(), &pb.ClearCartRequest{
 		UserId: 0,

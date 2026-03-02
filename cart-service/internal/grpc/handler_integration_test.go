@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	c "github.com/fjod/go_cart/cart-service/internal/cache"
@@ -76,7 +77,7 @@ func TestAddItemToCart_Success(t *testing.T) {
 	cache, cancelRedis := setupRedis(t)
 	defer cancelRedis()
 
-	service := s.NewCartService(repo, cache)
+	service := s.NewCartService(repo, cache, slog.Default())
 
 	mockProductClient := &mockProductServiceClient{
 		getProductResp: &productpb.GetProductResponse{
@@ -88,7 +89,7 @@ func TestAddItemToCart_Success(t *testing.T) {
 		},
 	}
 
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 	ret, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
 		UserId:    123,
 		ProductId: 1,
@@ -113,7 +114,7 @@ func TestGetCart_Integration(t *testing.T) {
 	cache, cancelRedis := setupRedis(t)
 	defer cancelRedis()
 
-	service := s.NewCartService(repo, cache)
+	service := s.NewCartService(repo, cache, slog.Default())
 	mockProductClient := &mockProductServiceClient{
 		getProductResp: &productpb.GetProductResponse{
 			Product: &productpb.Product{
@@ -123,7 +124,7 @@ func TestGetCart_Integration(t *testing.T) {
 			},
 		},
 	}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	// First add some items to the cart
 	_, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
@@ -159,7 +160,7 @@ func TestUpdateQuantity_Integration(t *testing.T) {
 	cache, cancelRedis := setupRedis(t)
 	defer cancelRedis()
 
-	service := s.NewCartService(repo, cache)
+	service := s.NewCartService(repo, cache, slog.Default())
 	mockProductClient := &mockProductServiceClient{
 		getProductResp: &productpb.GetProductResponse{
 			Product: &productpb.Product{
@@ -169,7 +170,7 @@ func TestUpdateQuantity_Integration(t *testing.T) {
 			},
 		},
 	}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	// First add an item
 	_, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
@@ -199,7 +200,7 @@ func TestRemoveItem_Integration(t *testing.T) {
 	cache, cancelRedis := setupRedis(t)
 	defer cancelRedis()
 
-	service := s.NewCartService(repo, cache)
+	service := s.NewCartService(repo, cache, slog.Default())
 	mockProductClient := &mockProductServiceClient{
 		getProductResp: &productpb.GetProductResponse{
 			Product: &productpb.Product{
@@ -209,7 +210,7 @@ func TestRemoveItem_Integration(t *testing.T) {
 			},
 		},
 	}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	// Add two items
 	_, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{
@@ -246,7 +247,7 @@ func TestClearCart_Integration(t *testing.T) {
 	cache, cancelRedis := setupRedis(t)
 	defer cancelRedis()
 
-	service := s.NewCartService(repo, cache)
+	service := s.NewCartService(repo, cache, slog.Default())
 	mockProductClient := &mockProductServiceClient{
 		getProductResp: &productpb.GetProductResponse{
 			Product: &productpb.Product{
@@ -256,7 +257,7 @@ func TestClearCart_Integration(t *testing.T) {
 			},
 		},
 	}
-	server := NewCartServiceServer(service, mockProductClient)
+	server := NewCartServiceServer(service, mockProductClient, slog.Default())
 
 	// Add items
 	_, err := server.AddItem(context.Background(), &pb.AddCartItemRequest{

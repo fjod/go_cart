@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -157,7 +158,7 @@ func TestProcessMessage_CreatesOrder(t *testing.T) {
 
 	writeEvent(t, brokerAddr, event)
 
-	c := NewConsumer(repo, brokerAddr)
+	c := NewConsumer(repo, slog.Default(), brokerAddr)
 	go c.Run(ctx)
 
 	require.Eventually(t, func() bool {
@@ -197,7 +198,7 @@ func TestProcessMessage_Idempotent(t *testing.T) {
 	writeEvent(t, brokerAddr, event)
 	writeEvent(t, brokerAddr, event)
 
-	c := NewConsumer(repo, brokerAddr)
+	c := NewConsumer(repo, slog.Default(), brokerAddr)
 	go c.Run(ctx)
 
 	// Wait for at least one order to be created
