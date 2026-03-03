@@ -49,7 +49,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer shutdown(context.Background())
-	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
+	grpcServer := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			logger.UnaryServerInterceptor(log),
+		),
+	)
 
 	productService := grpcHandler.NewProductServiceServer(repo)
 	pb.RegisterProductServiceServer(grpcServer, productService)

@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** February 26, 2026
+**Last Updated:** March 3, 2026
 **Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (In Progress)
 
 ---
@@ -941,11 +941,43 @@ orders-service/
 - ✅ `deployments/docker-compose.dev.yml` - OTel Collector container added (`otel/opentelemetry-collector-contrib:0.95.0`); ports 4317 (gRPC OTLP), 4318 (HTTP OTLP), 8888 (collector metrics); Jaeger container added (`jaegertracing/all-in-one:1.54`); Jaeger UI accessible at port 16686; Jaeger gRPC receiver on port 14250
 - ✅ `deployments/otel-config.yaml` - OTel Collector pipeline config: OTLP receiver (gRPC + HTTP), batch processor (1s timeout, 1024 batch size), dual exporters: `otlp/jaeger` forwarding to Jaeger and `debug` for console output
 
+#### Structured Logging (slog) ✅ Complete
+
+**Status:** Structured logging implemented across all seven services using Go's standard library `log/slog`
+
+**Completed:**
+
+**Shared Logger Package (pkg/logger/):**
+- ✅ `pkg/logger/logger.go` - `New(serviceName, level string)` factory function: creates a `slog.JSONHandler` writing to stdout at the configured level (debug/info/warn/error), attaches a `service` field to every log record, and returns a `*slog.Logger`
+- ✅ `pkg/logger/logger.go` - `WithContext(logger, ctx)` helper: extracts the active OpenTelemetry span's `trace_id` and `span_id` from the context and attaches them to the returned logger, enabling log-trace correlation; also propagates `request_id` if present in the context
+- ✅ `pkg/logger/logger.go` - `UnaryServerInterceptor(log)` gRPC interceptor: wraps every unary RPC call, measures duration, and emits a structured `rpc completed` (Info) or `rpc failed` (Error) log line with `method`, `duration`, and `grpc_code` fields
+
+**API Gateway (api-gateway/):**
+- ✅ `api-gateway/cmd/main.go` - `logger.New("api-gateway", "info")` initialized on startup; `slog.SetDefault(log)` sets it as the process-wide default; all startup, connection, and shutdown events use structured `log.Info` / `log.Error` calls
+- ✅ `api-gateway/internal/middleware/logging.go` - New `MyRequestLogger(log)` HTTP middleware: wraps each request with `middleware.NewWrapResponseWriter` to capture the response status code, then emits a structured `http request` log line with `method`, `path`, `status`, `duration`, and `request_id` fields; registered in the chi middleware chain after `RequestID` and before `Timeout`
+
+**Cart Service (cart-service/):**
+- ✅ `cart-service/cmd/main.go` - `logger.New("cart-service", "info")` initialized; logger passed into `CartService`, `CartServiceServer`, and `Poller` constructors; gRPC server registered with `logger.UnaryServerInterceptor(log)`; all startup and shutdown events use structured logging
+
+**Checkout Service (checkout-service/):**
+- ✅ `checkout-service/cmd/main.go` - `logger.New("checkout-service", "info")` initialized; `slog.SetDefault(log)` set; logger passed into `OutboxPoller` and `CheckoutService` constructors; gRPC server registered with `logger.UnaryServerInterceptor(log)`
+
+**Orders Service (orders-service/):**
+- ✅ `orders-service/cmd/main.go` - `logger.New("orders-service", "info")` initialized; `slog.SetDefault(log)` set; logger passed into Kafka consumer constructor; gRPC server registered with `logger.UnaryServerInterceptor(log)`
+
+**Inventory Service (inventory-service/):**
+- ✅ `inventory-service/cmd/main.go` - `logger.New("inventory-service", "info")` initialized; `slog.SetDefault(log)` set; gRPC server registered with `logger.UnaryServerInterceptor(log)`
+
+**Payment Service (payment-service/):**
+- ✅ `payment-service/cmd/main.go` - `logger.New("payment-service", "info")` initialized; `slog.SetDefault(log)` set; gRPC server registered with `logger.UnaryServerInterceptor(log)`
+
+**Product Service (product-service/):**
+- ✅ `product-service/cmd/main.go` - `logger.New("product-service", "info")` initialized; `slog.SetDefault(log)` set; gRPC server registered with `logger.UnaryServerInterceptor(log)`
+
 **Remaining Phase 4 Tasks:**
 - ⏳ Real JWT authentication (replace MockAuthMiddleware in API Gateway)
 - ⏳ Rate limiting middleware
 - ⏳ Circuit breakers for backend gRPC calls
-- ⏳ Structured logging (replace fmt.Printf/log with slog or zap)
 
 ---
 
@@ -1015,71 +1047,34 @@ orders-service/
 
 ## Recent Updates
 
-### February 26, 2026 - OpenTelemetry Distributed Tracing (Phase 4 Partial)
+### March 3, 2026 - Structured Logging with slog (Phase 4)
 
-**Summary:** Distributed tracing wired across all seven services using OpenTelemetry. A shared `pkg/tracing` module provides tracer initialization and Kafka header carrier helpers. Every service now registers an OTLP tracer on startup, gRPC traffic is automatically instrumented via `otelgrpc`, HTTP traffic at the API Gateway is instrumented via `otelhttp`, and trace context is propagated across Kafka message boundaries (Checkout Service outbox poller injects W3C context; Cart Service Kafka consumer extracts it). Jaeger and the OTel Collector have been added to the dev Docker Compose stack, making traces observable in the Jaeger UI at port 16686.
-
-**Changes:**
-
-**New Shared Package (pkg/tracing/):**
-- `pkg/tracing/tracing.go` - `InitTracer` function connecting to OTLP collector at a given address, creating a `TracerProvider` with `AlwaysSample`, setting the global OTel tracer and W3C composite propagator, returning a shutdown callback
-- `pkg/tracing/propagation.go` - `KafkaHeaderCarrier` implementing `TextMapCarrier` over a string map; `Inject(ctx)` and `Extract(ctx, headers)` package-level helpers for Kafka trace context propagation
-
-**Checkout Service:**
-- `checkout-service/internal/service/checkout_service_definitions.go` - Added `tracer t.Tracer` field to `CheckoutServiceImpl`, initialized with `otel.Tracer("checkout")` in the constructor
-- `checkout-service/internal/service/checkout_service.go` - Span `checkout_reserved` added around `CreateCheckoutSession` with `IdempotencyKey` span attribute
-- `checkout-service/internal/publisher/outbox_poller.go` - Span `kafka - publish - checkout.processed` wraps the Kafka publish; W3C trace context injected into message headers
-- `checkout-service/cmd/main.go` - `InitTracer` moved to early startup (before outbox poller init); all outbound gRPC clients use `otelgrpc.NewClientHandler()`; gRPC server uses `otelgrpc.NewServerHandler()`
-
-**Cart Service:**
-- `cart-service/internal/poller/poller.go` - Extracts W3C trace context from incoming Kafka message headers; starts span `kafka - consume - checkout.processed` as a child of the propagated context, completing the cross-service trace
-- `cart-service/cmd/main.go` - `InitTracer("cart-service", ...)` added; gRPC server uses `otelgrpc.NewServerHandler()`
-
-**All Remaining Services:**
-- `api-gateway/cmd/main.go` - `InitTracer("api-gateway", ...)` added; HTTP server wrapped with `otelhttp.NewHandler`; all gRPC clients use `otelgrpc.NewClientHandler()`
-- `orders-service/cmd/main.go` - `InitTracer("orders-service", ...)` and `otelgrpc.NewServerHandler()` added
-- `inventory-service/cmd/main.go` - `InitTracer("inventory-service", ...)` and `otelgrpc.NewServerHandler()` added
-- `payment-service/cmd/main.go` - `InitTracer("payment-service", ...)` and `otelgrpc.NewServerHandler()` added
-- `product-service/cmd/main.go` - `InitTracer("product-service", ...)` and `otelgrpc.NewServerHandler()` added
-
-**Observability Infrastructure:**
-- `deployments/docker-compose.dev.yml` - OTel Collector (`otel/opentelemetry-collector-contrib:0.95.0`, ports 4317/4318/8888) and Jaeger (`jaegertracing/all-in-one:1.54`, UI port 16686) added to dev stack
-- `deployments/otel-config.yaml` - OTel Collector pipeline: OTLP receiver -> batch processor -> `otlp/jaeger` + `debug` exporters
-
----
-
-### February 16, 2026 - API Gateway Orders Endpoints, Bug Fixes, and Integration Test v1.4
-
-**Summary:** API Gateway orders endpoints completed, closing the HTTP surface for the Orders Service. Two bug fixes applied: ClearCart idempotency in the Cart Service gRPC handler, and a Kafka consumer cold-start race condition in both the Cart Service poller and the Orders Service consumer. Integration test flow updated to v1.4 with Phase 10 (orders HTTP error scenarios) added.
+**Summary:** Structured JSON logging implemented across all seven services using Go's standard library `log/slog`. A shared `pkg/logger` package provides a logger factory, a context-aware helper for log-trace correlation, and a gRPC unary server interceptor. Every service now initializes a named logger on startup, sets it as the process-wide `slog` default, and registers the gRPC interceptor so every RPC call emits a timed, structured log line. The API Gateway additionally gains a new `MyRequestLogger` HTTP middleware that captures response status codes and logs each request with method, path, status, duration, and request ID.
 
 **Changes:**
 
-**API Gateway - Orders Endpoints (api-gateway/):**
-- New `orders_handler.go` with `OrdersHandler` struct, `NewOrdersHandler` constructor, `ListOrders` handler (`GET /api/v1/orders`) and `GetOrder` handler (`GET /api/v1/orders/{order_id}`)
-- Response DTOs `OrderResponseDTO` and `OrderItemDTO` with `convertProtoOrder()` helper
-- `OrdersServiceAddr` config field added (default: `localhost:50055`) and gRPC client initialized in `api-gateway/cmd/main.go`
-- 2 new routes registered, bringing the total active route count to 10
-- 15 unit tests in `orders_handler_test.go` covering success, empty list, unauthorized, gRPC error, missing order ID, and proto conversion cases — all passing
+**Shared Logger Package (pkg/logger/):**
+- `pkg/logger/logger.go` - `New(serviceName, level string)` creates a `slog.JSONHandler` writing JSON to stdout; attaches a `service` field to all records
+- `pkg/logger/logger.go` - `WithContext(logger, ctx)` extracts `trace_id` and `span_id` from the active OTel span and `request_id` from context, enabling log-trace correlation
+- `pkg/logger/logger.go` - `UnaryServerInterceptor(log)` gRPC interceptor logs method, duration, and gRPC status code for every unary RPC
 
-**Bug Fix — ClearCart Idempotency (cart-service/internal/grpc/handler.go):**
-- `ErrCartNotFound` is now caught in the `ClearCart` handler and treated as a no-op success
-- `DELETE /api/v1/cart` on an already-empty cart now returns 200 instead of 500
+**API Gateway (api-gateway/):**
+- `api-gateway/cmd/main.go` - `logger.New("api-gateway", "info")` initialized; `slog.SetDefault` set; all events use structured logging
+- `api-gateway/internal/middleware/logging.go` - New `MyRequestLogger` HTTP middleware logging method, path, status, duration, and request_id for every request
 
-**Bug Fix — Kafka Consumer Cold-Start Race (cart-service/internal/poller/poller.go, orders-service/internal/consumer/checkout_consumer.go):**
-- Added `StartOffset: kafka.FirstOffset` to the Kafka reader config in both the Cart Service poller and the Orders Service consumer
-- Resolves the race condition where the first checkout event was published before consumers finished joining the consumer group
-- FirstOffset only affects a consumer group's first-ever connection; subsequent reads use committed offsets as normal
-
-**Integration Test Flow (integration_test_flow.md → v1.4):**
-- Tests 5.3 and 5.4 updated to include HTTP curl verification via API Gateway in addition to grpcurl
-- New Phase 10 added with 4 HTTP-level error scenario tests for the orders endpoints (empty list returns `[]`, invalid UUID returns 400, not-found UUID returns 404, service unavailable returns 503)
-- Run results: 19 PASS / 4 FAIL / 2 SKIP out of 25 tests; Phase 10 tests all passed; remaining failures are Kafka consumer cold-start races on tests 5.2, 5.3, cascaded failure on 7.1, and the ClearCart 500 (now fixed by the bug fix above)
+**All Backend Services:**
+- `cart-service/cmd/main.go` - Named logger initialized; passed into service, gRPC server, and poller; `UnaryServerInterceptor` registered
+- `checkout-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; passed into outbox poller and checkout service; `UnaryServerInterceptor` registered
+- `orders-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; passed into Kafka consumer; `UnaryServerInterceptor` registered
+- `inventory-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
+- `payment-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
+- `product-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
 
 ---
 
 ## Progress Summary
 
-**Overall Completion:** ~95%
+**Overall Completion:** ~97%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -1097,7 +1092,7 @@ orders-service/
 - ✅ Cart Service Production Readiness: 80% (env vars, graceful shutdown, Redis + Kafka integration done)
 - ✅ **Cart Service Bug Fixes: UpdateQuantity now returns 404 instead of 500 for non-existent items**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
-- ✅ API Gateway Middleware: 80% (auth mock, request ID done; JWT, rate limiting, circuit breaker pending)
+- ✅ API Gateway Middleware: 90% (auth mock, request ID, structured HTTP logging done; JWT, rate limiting, circuit breaker pending)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
@@ -1109,6 +1104,7 @@ orders-service/
 - ✅ **Payment Service: 100%** (stub with 2 gRPC endpoints, 9 unit tests)
 - ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, Kafka broker + Kafdrop, OTel Collector, and Jaeger configured)
 - ✅ **Distributed Tracing: 100%** (OpenTelemetry instrumentation across all 7 services; gRPC auto-instrumented via otelgrpc; HTTP instrumented via otelhttp; Kafka trace propagation via W3C headers; Jaeger UI available at port 16686)
+- ✅ **Structured Logging: 100%** (slog JSON logging across all 7 services; shared pkg/logger with factory, trace-correlation helper, and gRPC unary interceptor; HTTP request middleware in API Gateway)
 - ✅ **Integration Testing: 76%** (25 tests documented in v1.4; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 new orders HTTP endpoints all passing; 4 remaining failures: Kafka consumer cold-start race on tests 5.2 and 5.3, cascaded failure on 7.1, and ClearCart 500 on empty cart now fixed)
 
 **Phase 1 Progress:**
@@ -1130,7 +1126,7 @@ orders-service/
 
 **Phase 4 Progress:**
 - **Distributed Tracing ✅ 100% complete (OpenTelemetry across all 7 services; shared pkg/tracing module; gRPC auto-instrumented; HTTP instrumented at API Gateway; Kafka W3C context propagation between Checkout and Cart; Jaeger + OTel Collector in Docker Compose)**
+- **Structured Logging ✅ 100% complete (slog JSON logging across all 7 services; shared pkg/logger module with service factory, context/trace correlation helper, and gRPC unary interceptor; HTTP request logging middleware in API Gateway)**
 - Real JWT authentication: not started
 - Rate limiting middleware: not started
 - Circuit breakers: not started
-- Structured logging: not started

@@ -172,7 +172,11 @@ func main() {
 
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			logger.UnaryServerInterceptor(log),
+		),
 	)
+
 	pb.RegisterCheckoutServiceServer(grpcServer, checkoutServer)
 	reflection.Register(grpcServer)
 

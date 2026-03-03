@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	h "github.com/fjod/go_cart/api-gateway/internal/http"
+	l "github.com/fjod/go_cart/api-gateway/internal/middleware"
 )
 
 type Config struct {
@@ -123,10 +124,10 @@ func main() {
 	ordersHandler := h.NewOrdersHandler(ordersClient, cfg.RequestTimeout)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RequestID)
-	r.Use(h.RequestIDMiddleware)
+	r.Use(middleware.RequestID)   // 1. generate request ID
+	r.Use(h.RequestIDMiddleware)  // 2. your custom request ID propagation
+	r.Use(middleware.Recoverer)   // 3. catch panics
+	r.Use(l.MyRequestLogger(log)) // 4. log with request ID + correct status
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(middleware.Compress(5))
 	r.Use(h.MockAuthMiddleware)

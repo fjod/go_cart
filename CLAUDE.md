@@ -192,20 +192,22 @@ service/
 
 ### Phase 4: Integration & Polish 🔄 In Progress
 
-#### Distributed Tracing (OpenTelemetry) ✅ Partially Complete
+#### Distributed Tracing (OpenTelemetry) ✅ Complete
 - `pkg/tracing/propagation.go` — shared `KafkaHeaderCarrier` (W3C TextMapCarrier) for trace context over Kafka headers
-- Checkout Service: tracer injected into `CheckoutServiceImpl`, span `checkout_reserved` on session creation
-- Checkout Outbox Poller: span `kafka - publish - checkout.processed` with header injection
-- Cart Poller: extracts trace context from Kafka headers, span `kafka - consume - checkout.processed`
-- gRPC server: `otelgrpc.NewServerHandler()` for automatic gRPC span propagation
-- `InitTracer("checkout-service", "localhost:4317")` initialized before poller startup
+- All 7 services instrumented: `InitTracer` on startup, gRPC servers use `otelgrpc.NewServerHandler()`, gRPC clients use `otelgrpc.NewClientHandler()`
+- API Gateway HTTP server wrapped with `otelhttp.NewHandler` for automatic HTTP span creation
+- Checkout Outbox Poller injects W3C trace context into Kafka headers; Cart Poller extracts it — completing cross-service trace links
+- Jaeger UI at port 16686; OTel Collector in Docker Compose
+
+#### Structured Logging (slog) ✅ Complete
+- `pkg/logger/logger.go` — shared `New(serviceName, level)` factory (JSON to stdout), `WithContext` for log-trace correlation, `UnaryServerInterceptor` for gRPC request logging
+- All 7 services use `logger.New` on startup and register `UnaryServerInterceptor` on their gRPC servers
+- API Gateway: new `MyRequestLogger` HTTP middleware logs method, path, status, duration, and request_id for every request
 
 #### Remaining Phase 4 Items
 - ❌ Real JWT authentication (replace MockAuthMiddleware)
 - ❌ Rate limiting middleware
 - ❌ Circuit breakers
-- ❌ Structured logging (replace fmt.Printf with slog/zap)
-- ❌ Tracing for remaining services (Cart, Orders, API Gateway, Product, Inventory, Payment)
 
 ## Known Issues
 
@@ -215,11 +217,9 @@ service/
 
 ## Next Priorities
 
-1. Extend tracing to remaining services (Cart, Orders, API Gateway, Product, Inventory, Payment)
-2. Replace MockAuthMiddleware with real JWT validation
-3. Add rate limiting middleware to API Gateway
-4. Implement circuit breakers for backend service calls
-5. Add structured logging (replace fmt.Printf with slog/zap)
+1. Replace MockAuthMiddleware with real JWT validation
+2. Add rate limiting middleware to API Gateway
+3. Implement circuit breakers for backend service calls
 
 ## Testing
 

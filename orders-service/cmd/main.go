@@ -101,6 +101,9 @@ func main() {
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			logger.UnaryServerInterceptor(log),
+		),
 	)
 
 	pb.RegisterOrdersServiceServer(grpcServer, ordersHandler)

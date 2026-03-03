@@ -41,6 +41,9 @@ func main() {
 
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			logger.UnaryServerInterceptor(log),
+		),
 	)
 	pb.RegisterPaymentServiceServer(grpcServer, server)
 	reflection.Register(grpcServer)
