@@ -123,6 +123,7 @@ func main() {
 	ordersClient := orderspb.NewOrdersServiceClient(ordersServiceConn)
 	ordersHandler := h.NewOrdersHandler(ordersClient, cfg.RequestTimeout)
 
+	limiter := l.NewRateLimiter(10, 20) // 10 req/sec, burst of 20
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)   // 1. generate request ID
 	r.Use(h.RequestIDMiddleware)  // 2. your custom request ID propagation
@@ -131,6 +132,7 @@ func main() {
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(middleware.Compress(5))
 	r.Use(h.MockAuthMiddleware)
+	r.Use(limiter.Middleware)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})

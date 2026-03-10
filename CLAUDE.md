@@ -204,9 +204,12 @@ service/
 - All 7 services use `logger.New` on startup and register `UnaryServerInterceptor` on their gRPC servers
 - API Gateway: new `MyRequestLogger` HTTP middleware logs method, path, status, duration, and request_id for every request
 
+#### Rate Limiting (API Gateway) ✅ Complete
+- `api-gateway/internal/middleware/rate.go` — `RateLimiter` using `golang.org/x/time/rate`; per-client token buckets keyed by authenticated user ID (falls back to `RemoteAddr`); 10 req/sec with burst of 20; background goroutine evicts stale entries every 10 minutes
+- `api-gateway/cmd/main.go` — `NewRateLimiter(10, 20)` registered as chi middleware after `MockAuthMiddleware`; returns HTTP 429 with `Retry-After: 1` header on exhaustion
+
 #### Remaining Phase 4 Items
 - ❌ Real JWT authentication (replace MockAuthMiddleware)
-- ❌ Rate limiting middleware
 - ❌ Circuit breakers
 
 ## Known Issues
@@ -218,8 +221,7 @@ service/
 ## Next Priorities
 
 1. Replace MockAuthMiddleware with real JWT validation
-2. Add rate limiting middleware to API Gateway
-3. Implement circuit breakers for backend service calls
+2. Implement circuit breakers for backend service calls
 
 ## Testing
 

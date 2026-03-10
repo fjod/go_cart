@@ -1,6 +1,6 @@
 # E-Commerce Platform - Project Status
 
-**Last Updated:** March 3, 2026
+**Last Updated:** March 10, 2026
 **Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (In Progress)
 
 ---
@@ -379,7 +379,7 @@ cart-service/
   - Replace MockAuthMiddleware with actual JWT validation
   - Token parsing and claims extraction
   - Public key/secret configuration
-- ⏳ Rate limiting middleware
+- ✅ Rate limiting middleware - **COMPLETED** (api-gateway/internal/middleware/rate.go)
 - ⏳ Circuit breaker implementation
 - ⏳ Integration tests with real services
 - ⏳ TLS/SSL configuration for production
@@ -388,18 +388,21 @@ cart-service/
 ```
 api-gateway/
 ├── cmd/
-│   └── main.go                          ✅ HTTP server with chi router, 10 routes active (5 cart + 1 product + 1 checkout + 2 orders + 1 health)
+│   └── main.go                          ✅ HTTP server with chi router, 10 routes active; rate limiter wired into middleware chain
 ├── internal/
-│   └── http/
-│       ├── cart_handler.go              ✅ Complete cart handlers (5 endpoints)
-│       ├── cart_handler_test.go         ✅ Comprehensive unit tests (17 functions, 38 cases)
-│       ├── product_handler.go           ✅ Product handler (1 endpoint)
-│       ├── product_handler_test.go      ✅ Unit tests (4 functions, 7 cases)
-│       ├── checkout_handler.go          ✅ Checkout handler (1 endpoint: InitiateCheckout)
-│       ├── orders_handler.go            ✅ Orders handler (2 endpoints: ListOrders, GetOrder)
-│       ├── orders_handler_test.go       ✅ Unit tests (15 cases, all passing)
-│       └── middleware.go                ✅ Auth and RequestID middlewares
-├── go.mod                               ✅ Dependencies configured (includes checkout-service, orders-service proto)
+│   ├── http/
+│   │   ├── cart_handler.go              ✅ Complete cart handlers (5 endpoints)
+│   │   ├── cart_handler_test.go         ✅ Comprehensive unit tests (17 functions, 38 cases)
+│   │   ├── product_handler.go           ✅ Product handler (1 endpoint)
+│   │   ├── product_handler_test.go      ✅ Unit tests (4 functions, 7 cases)
+│   │   ├── checkout_handler.go          ✅ Checkout handler (1 endpoint: InitiateCheckout)
+│   │   ├── orders_handler.go            ✅ Orders handler (2 endpoints: ListOrders, GetOrder)
+│   │   ├── orders_handler_test.go       ✅ Unit tests (15 cases, all passing)
+│   │   └── middleware.go                ✅ Auth and RequestID middlewares
+│   └── middleware/
+│       ├── logging.go                   ✅ MyRequestLogger HTTP middleware (method, path, status, duration, request_id)
+│       └── rate.go                      ✅ Per-client token bucket rate limiter (10 req/sec, burst 20, user-ID-keyed)
+├── go.mod                               ✅ Dependencies configured (golang.org/x/time added for rate limiter)
 └── go.sum                               ✅ Auto-generated
 
 ```
@@ -974,9 +977,26 @@ orders-service/
 **Product Service (product-service/):**
 - ✅ `product-service/cmd/main.go` - `logger.New("product-service", "info")` initialized; `slog.SetDefault(log)` set; gRPC server registered with `logger.UnaryServerInterceptor(log)`
 
+#### Rate Limiting Middleware (API Gateway) ✅ Complete
+
+**Status:** Per-client token bucket rate limiter implemented and registered in the API Gateway middleware chain
+
+**Completed:**
+
+**Rate Limiter (api-gateway/internal/middleware/rate.go):**
+- ✅ `RateLimiter` struct backed by a `sync.Map` of per-client `rate.Limiter` instances from `golang.org/x/time/rate`
+- ✅ `NewRateLimiter(rps float64, burst int)` constructor — configured at 10 req/sec with a burst allowance of 20; spawns a background cleanup goroutine on creation
+- ✅ `getLimiter(key string)` — returns an existing per-client limiter or creates a new one on first request; updates `lastSeen` on each access
+- ✅ `cleanup(interval)` — background goroutine runs every 10 minutes and evicts client entries inactive for more than 3 minutes, preventing unbounded memory growth
+- ✅ `Middleware(next http.Handler)` — extracts the rate-limiting key preferring authenticated user ID from request context (falls back to `RemoteAddr` if unauthenticated); returns HTTP 429 with a `Retry-After: 1` header when the token bucket is exhausted
+
+**API Gateway Wiring (api-gateway/cmd/main.go):**
+- ✅ `limiter := l.NewRateLimiter(10, 20)` instantiated before router setup
+- ✅ `r.Use(limiter.Middleware)` registered after `MockAuthMiddleware` in the chi middleware chain, ensuring the rate-limiting key resolves to the authenticated user ID
+- ✅ `golang.org/x/time v0.14.0` added to `api-gateway/go.mod` as the rate limiting dependency
+
 **Remaining Phase 4 Tasks:**
 - ⏳ Real JWT authentication (replace MockAuthMiddleware in API Gateway)
-- ⏳ Rate limiting middleware
 - ⏳ Circuit breakers for backend gRPC calls
 
 ---
@@ -1047,6 +1067,18 @@ orders-service/
 
 ## Recent Updates
 
+### March 10, 2026 - Rate Limiting Middleware (Phase 4)
+
+**Summary:** Per-client token bucket rate limiting added to the API Gateway. A new `RateLimiter` middleware in `api-gateway/internal/middleware/rate.go` uses `golang.org/x/time/rate` to enforce 10 requests/second per client with a burst allowance of 20. The rate-limiting key resolves to the authenticated user ID from request context and falls back to `RemoteAddr` for unauthenticated requests. Stale client entries are evicted by a background cleanup goroutine every 10 minutes. The middleware is registered in the chi middleware chain immediately after `MockAuthMiddleware` so the user ID is available for keying. `golang.org/x/time v0.14.0` was added as a new dependency.
+
+**Changes:**
+
+- `api-gateway/internal/middleware/rate.go` — New file: `RateLimiter` struct with `sync.Map`, `NewRateLimiter(rps, burst)` constructor, `getLimiter(key)` per-client limiter lookup, `cleanup(interval)` background eviction goroutine, and `Middleware` handler that returns HTTP 429 with `Retry-After: 1` on exhaustion
+- `api-gateway/cmd/main.go` — `NewRateLimiter(10, 20)` instantiated; `limiter.Middleware` registered in the chi middleware chain after `MockAuthMiddleware`
+- `api-gateway/go.mod` — `golang.org/x/time v0.14.0` added
+
+---
+
 ### March 3, 2026 - Structured Logging with slog (Phase 4)
 
 **Summary:** Structured JSON logging implemented across all seven services using Go's standard library `log/slog`. A shared `pkg/logger` package provides a logger factory, a context-aware helper for log-trace correlation, and a gRPC unary server interceptor. Every service now initializes a named logger on startup, sets it as the process-wide `slog` default, and registers the gRPC interceptor so every RPC call emits a timed, structured log line. The API Gateway additionally gains a new `MyRequestLogger` HTTP middleware that captures response status codes and logs each request with method, path, status, duration, and request ID.
@@ -1092,7 +1124,7 @@ orders-service/
 - ✅ Cart Service Production Readiness: 80% (env vars, graceful shutdown, Redis + Kafka integration done)
 - ✅ **Cart Service Bug Fixes: UpdateQuantity now returns 404 instead of 500 for non-existent items**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
-- ✅ API Gateway Middleware: 90% (auth mock, request ID, structured HTTP logging done; JWT, rate limiting, circuit breaker pending)
+- ✅ API Gateway Middleware: 95% (auth mock, request ID, structured HTTP logging, rate limiting done; JWT auth, circuit breaker pending)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
@@ -1110,7 +1142,7 @@ orders-service/
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
 - **Cart Service 100% complete (All 5 gRPC endpoints with Redis caching, Kafka consumer for cart clearing, service layer, unit + integration tests, bug fixes applied)**
-- **API Gateway ~90% complete (All 5 cart + 1 product + 1 checkout + 2 orders endpoints complete; JWT auth, rate limiting, circuit breaker pending)**
+- **API Gateway ~92% complete (All 5 cart + 1 product + 1 checkout + 2 orders endpoints complete; rate limiting done; JWT auth, circuit breaker pending)**
 - **Docker Infrastructure ✅ 100% complete (MongoDB, Redis, PostgreSQL, Kafka broker, and Kafdrop UI configured)**
 
 **Phase 2 Progress:**
@@ -1127,6 +1159,6 @@ orders-service/
 **Phase 4 Progress:**
 - **Distributed Tracing ✅ 100% complete (OpenTelemetry across all 7 services; shared pkg/tracing module; gRPC auto-instrumented; HTTP instrumented at API Gateway; Kafka W3C context propagation between Checkout and Cart; Jaeger + OTel Collector in Docker Compose)**
 - **Structured Logging ✅ 100% complete (slog JSON logging across all 7 services; shared pkg/logger module with service factory, context/trace correlation helper, and gRPC unary interceptor; HTTP request logging middleware in API Gateway)**
+- **Rate Limiting ✅ 100% complete (per-client token bucket middleware in API Gateway; 10 req/sec, burst 20; user-ID-keyed with IP fallback; background stale-entry cleanup; golang.org/x/time dependency added)**
 - Real JWT authentication: not started
-- Rate limiting middleware: not started
 - Circuit breakers: not started
