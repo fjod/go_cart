@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fjod/go_cart/api-gateway/internal/middleware"
 	pb "github.com/fjod/go_cart/orders-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc"
@@ -40,7 +41,7 @@ func (m OrdersClientMock) ListOrders(ctx context.Context, in *pb.ListOrdersReque
 // --- helper ---
 
 func withUser(r *http.Request) *http.Request {
-	ctx := context.WithValue(r.Context(), "user_id", int64(1))
+	ctx := context.WithValue(r.Context(), middleware.UserIDKey, int64(1))
 	return r.WithContext(ctx)
 }
 
