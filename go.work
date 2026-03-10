@@ -10,4 +10,5 @@ use (
 	./pkg/tracing
 	./pkg/logger
 	./product-service
+	./tokengen
 )

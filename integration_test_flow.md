@@ -56,13 +56,24 @@ This document describes the complete integration test flow for the e-commerce pl
    # Keys become: 1708771200-test-checkout-001, 1708771200-test-checkout-empty-001, etc.
    ```
 
-5. **PostgreSQL MCP Server (For Agent Automation):**
+5. **JWT Token (REQUIRED for all API requests):**
+   Generate a signed JWT for the default test user (user_id=1) and export it:
+   ```bash
+   export TOKEN=$(go run ./tokengen/cmd/main.go 1)
+   # Verify: echo $TOKEN should print a JWT string
+   ```
+   Include this header in every curl command below:
+   ```
+   -H "Authorization: Bearer $TOKEN"
+   ```
+
+7. **PostgreSQL MCP Server (For Agent Automation):**
    - MCP server connection is available for automated database verification
    - Sub-agents can use MCP tools to verify checkout_sessions and outbox_events tables
    - All verification queries are documented in each test phase below
    - Database: PostgreSQL on localhost:5432, schema: public
 
-6. **Kafka MCP Server (For Agent Automation):**
+7. **Kafka MCP Server (For Agent Automation):**
    - MCP server connection is available for automated Kafka topic verification
    - Sub-agents can use MCP tools to consume and inspect messages from Kafka topics
    - Broker: localhost:9092 (started via docker-compose)
@@ -115,7 +126,8 @@ Step 4: Verify Kafka message published
 **Purpose:** Verify API Gateway is running
 
 ```bash
-curl -X GET http://localhost:8080/health
+curl -X GET http://localhost:8080/health \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -135,7 +147,8 @@ curl -X GET http://localhost:8080/health
 **Purpose:** Verify Product Service integration and retrieve product catalog
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/products
+curl -X GET http://localhost:8080/api/v1/products \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -178,7 +191,8 @@ curl -X GET http://localhost:8080/api/v1/products
 **Purpose:** Verify initial cart state
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/cart
+curl -X GET http://localhost:8080/api/v1/cart \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -202,6 +216,7 @@ curl -X GET http://localhost:8080/api/v1/cart
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "product_id": 1,
@@ -244,6 +259,7 @@ curl -X POST http://localhost:8080/api/v1/cart/items \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "product_id": 2,
@@ -292,6 +308,7 @@ curl -X POST http://localhost:8080/api/v1/cart/items \
 
 ```bash
 curl -X PUT http://localhost:8080/api/v1/cart/items/2 \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "quantity": 3
@@ -338,7 +355,8 @@ curl -X PUT http://localhost:8080/api/v1/cart/items/2 \
 **Purpose:** Test cache retrieval after modifications
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/cart
+curl -X GET http://localhost:8080/api/v1/cart \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -380,7 +398,8 @@ curl -X GET http://localhost:8080/api/v1/cart
 **Purpose:** Test item deletion
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/cart/items/2
+curl -X DELETE http://localhost:8080/api/v1/cart/items/2 \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -419,6 +438,7 @@ curl -X DELETE http://localhost:8080/api/v1/cart/items/2
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "product_id": 999,
@@ -442,6 +462,7 @@ curl -X POST http://localhost:8080/api/v1/cart/items \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "product_id": 1,
@@ -465,6 +486,7 @@ curl -X POST http://localhost:8080/api/v1/cart/items \
 
 ```bash
 curl -X PUT http://localhost:8080/api/v1/cart/items/999 \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "quantity": 5
@@ -491,6 +513,7 @@ curl -X PUT http://localhost:8080/api/v1/cart/items/999 \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-001\"}"
 ```
@@ -595,7 +618,8 @@ mcp__kafka__describe_topic(
 # 5s covers the worst-case combined latency without needing a retry loop.
 sleep 5
 
-curl -X GET http://localhost:8080/api/v1/cart
+curl -X GET http://localhost:8080/api/v1/cart \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -631,8 +655,9 @@ sleep 5
 
 **HTTP Verification via API Gateway:**
 ```bash
-# List orders for the authenticated user (user_id=1 via MockAuthMiddleware)
-curl -X GET http://localhost:8080/api/v1/orders
+# List orders for the authenticated user (user_id=1 from JWT claims)
+curl -X GET http://localhost:8080/api/v1/orders \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -705,7 +730,8 @@ mcp__postgres-mcp__execute_sql(
 
 **HTTP Verification via API Gateway:**
 ```bash
-curl -X GET http://localhost:8080/api/v1/orders/<order_id_from_5.3>
+curl -X GET http://localhost:8080/api/v1/orders/<order_id_from_5.3> \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -749,6 +775,7 @@ grpcurl -plaintext -d '{"order_id": "<order_id_from_5.3>"}' localhost:50055 orde
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-001\"}"
 ```
@@ -779,6 +806,7 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-empty-001\"}"
 ```
@@ -800,6 +828,7 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 ```bash
 # Re-add item to cart first
 curl -X POST http://localhost:8080/api/v1/cart/items \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "product_id": 3,
@@ -808,6 +837,7 @@ curl -X POST http://localhost:8080/api/v1/cart/items \
 
 # Try checkout without idempotency_key
 curl -X POST http://localhost:8080/api/v1/checkout \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -830,6 +860,7 @@ curl -X POST http://localhost:8080/api/v1/checkout \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/checkout \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"idempotency_key\": \"${RUN_ID}-test-checkout-fail-001\"}"
 ```
@@ -981,7 +1012,8 @@ mcp__postgres-mcp__get_object_details(
 **Pre-condition:** Run before any checkout, or with a fresh user
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/orders
+curl -X GET http://localhost:8080/api/v1/orders \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -1001,7 +1033,8 @@ curl -X GET http://localhost:8080/api/v1/orders
 **Purpose:** Verify the gateway returns 400 when the order_id is not a valid UUID
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/orders/not-a-uuid
+curl -X GET http://localhost:8080/api/v1/orders/not-a-uuid \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -1024,7 +1057,8 @@ curl -X GET http://localhost:8080/api/v1/orders/not-a-uuid
 **Purpose:** Verify the gateway returns 404 for a valid UUID that doesn't exist
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000000
+curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000000 \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -1049,7 +1083,8 @@ curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-00000000
 **Setup:** Stop the Orders Service (`Ctrl+C` in Terminal 7), then:
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000001
+curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-000000000001 \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**
@@ -1072,7 +1107,8 @@ curl -X GET http://localhost:8080/api/v1/orders/00000000-0000-0000-0000-00000000
 **Purpose:** Test cart reset functionality
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/cart
+curl -X DELETE http://localhost:8080/api/v1/cart \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 **Expected Response:**

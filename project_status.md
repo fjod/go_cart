@@ -1,7 +1,7 @@
 # E-Commerce Platform - Project Status
 
 **Last Updated:** March 10, 2026
-**Current Phase:** Phase 3 - Order Processing (100% Complete) ✅ | Phase 4 - Integration & Polish (In Progress)
+**Current Phase:** Phase 4 - Integration & Polish (In Progress — 1 item remaining)
 
 ---
 
@@ -275,15 +275,14 @@ cart-service/
   - Checkout Service client connection (localhost:50056, configurable via CHECKOUT_SERVICE_ADDR)
   - Orders Service client connection (localhost:50055, configurable via ORDERS_SERVICE_ADDR)
   - Connection using insecure credentials for development
-- ✅ Middleware stack (api-gateway/internal/http/middleware.go:1-39)
+- ✅ Middleware stack
   - Logger middleware (chi built-in)
   - Recoverer middleware (panic recovery)
-  - RequestID middleware (X-Request-ID header propagation, line 27-38)
+  - RequestID middleware (api-gateway/internal/middleware/request_id.go — X-Request-ID header propagation)
   - Timeout middleware (30s default)
   - Compression middleware (level 5)
-  - MockAuthMiddleware (simulates JWT authentication, line 11-24)
-    - Injects user_id as int64(1) into request context
-    - Production-ready placeholder for JWT token validation
+  - JWTAuthMiddleware (api-gateway/internal/middleware/auth.go — HMAC-SHA256 token validation; extracts user_id from claims into request context; returns 401 on missing/malformed/invalid token)
+  - RateLimiter middleware (registered after JWTAuthMiddleware so the rate-limiting key resolves to authenticated user ID)
 - ✅ Complete REST endpoint handlers for cart operations (api-gateway/internal/http/cart_handler.go)
   - CartHandler struct with gRPC client injection
   - **5/5 cart endpoints fully implemented:**
@@ -375,10 +374,12 @@ cart-service/
   - ✅ Response DTOs: OrderResponseDTO, OrderItemDTO with convertProtoOrder() helper
   - ✅ Reuses existing helpers: getUserIDFromContext, respondJSON, respondError, handleGRPCError
   - ✅ 15 unit tests (orders_handler_test.go) - all passing
-- ⏳ Real JWT authentication
-  - Replace MockAuthMiddleware with actual JWT validation
-  - Token parsing and claims extraction
-  - Public key/secret configuration
+- ✅ Real JWT authentication - **COMPLETED** (api-gateway/internal/middleware/auth.go)
+  - `JWTAuthMiddleware(secret []byte)` validates HMAC-SHA256 signed tokens
+  - Returns 401 on missing header, wrong format, invalid signature, or expired token
+  - Extracts `user_id` from JWT claims into request context
+  - `JWT_SECRET` env var configures the shared secret (default provided for development)
+  - `tokengen/cmd/main.go` — standalone JWT generator tool for testing
 - ✅ Rate limiting middleware - **COMPLETED** (api-gateway/internal/middleware/rate.go)
 - ⏳ Circuit breaker implementation
 - ⏳ Integration tests with real services
@@ -388,7 +389,7 @@ cart-service/
 ```
 api-gateway/
 ├── cmd/
-│   └── main.go                          ✅ HTTP server with chi router, 10 routes active; rate limiter wired into middleware chain
+│   └── main.go                          ✅ HTTP server with chi router, 10 routes active; JWT auth + rate limiter in middleware chain; JWT_SECRET env var
 ├── internal/
 │   ├── http/
 │   │   ├── cart_handler.go              ✅ Complete cart handlers (5 endpoints)
@@ -397,14 +398,23 @@ api-gateway/
 │   │   ├── product_handler_test.go      ✅ Unit tests (4 functions, 7 cases)
 │   │   ├── checkout_handler.go          ✅ Checkout handler (1 endpoint: InitiateCheckout)
 │   │   ├── orders_handler.go            ✅ Orders handler (2 endpoints: ListOrders, GetOrder)
-│   │   ├── orders_handler_test.go       ✅ Unit tests (15 cases, all passing)
-│   │   └── middleware.go                ✅ Auth and RequestID middlewares
+│   │   └── orders_handler_test.go       ✅ Unit tests (15 cases, all passing)
 │   └── middleware/
+│       ├── auth.go                      ✅ JWTAuthMiddleware (HMAC-SHA256, Bearer token, user_id extraction)
 │       ├── logging.go                   ✅ MyRequestLogger HTTP middleware (method, path, status, duration, request_id)
-│       └── rate.go                      ✅ Per-client token bucket rate limiter (10 req/sec, burst 20, user-ID-keyed)
+│       ├── rate.go                      ✅ Per-client token bucket rate limiter (10 req/sec, burst 20, user-ID-keyed)
+│       └── request_id.go               ✅ RequestID middleware (X-Request-ID header propagation)
 ├── go.mod                               ✅ Dependencies configured (golang.org/x/time added for rate limiter)
 └── go.sum                               ✅ Auto-generated
 
+```
+
+**tokengen Tool:**
+```
+tokengen/
+├── cmd/
+│   └── main.go                          ✅ Standalone JWT generator; accepts optional user_id arg; uses same secret as gateway
+└── go.mod                               ✅ Go module (github.com/fjod/go_cart/tokengen); github.com/golang-jwt/jwt/v5 dependency
 ```
 
 ### Phase 2: Checkout Orchestration ✅ 100% Complete
@@ -992,11 +1002,32 @@ orders-service/
 
 **API Gateway Wiring (api-gateway/cmd/main.go):**
 - ✅ `limiter := l.NewRateLimiter(10, 20)` instantiated before router setup
-- ✅ `r.Use(limiter.Middleware)` registered after `MockAuthMiddleware` in the chi middleware chain, ensuring the rate-limiting key resolves to the authenticated user ID
+- ✅ `r.Use(limiter.Middleware)` registered after `JWTAuthMiddleware` in the chi middleware chain, ensuring the rate-limiting key resolves to the authenticated user ID
 - ✅ `golang.org/x/time v0.14.0` added to `api-gateway/go.mod` as the rate limiting dependency
 
+#### JWT Authentication (API Gateway) ✅ Complete
+
+**Status:** Real JWT authentication implemented in the API Gateway, replacing the former MockAuthMiddleware. Pre-flight enforcement tests confirm all four invalid-token scenarios (missing header, wrong format, invalid token, tampered token) correctly return 401.
+
+**Completed:**
+
+**JWT Middleware (api-gateway/internal/middleware/auth.go):**
+- ✅ `JWTAuthMiddleware(secret []byte)` — validates HMAC-SHA256 signed Bearer tokens; returns HTTP 401 if the `Authorization` header is absent, not in `Bearer <token>` format, or the signature is invalid; extracts `user_id` from JWT claims into request context for downstream handlers and rate limiter key resolution
+
+**API Gateway Wiring (api-gateway/cmd/main.go):**
+- ✅ `JwtSecret` field added to `Config` struct; populated from `JWT_SECRET` env var (default: `Yn8x85spEjIXQnGlmaWAqbX9I6RS3ts2TBXUXQoyi2g=`)
+- ✅ `r.Use(l.JWTAuthMiddleware([]byte(cfg.JwtSecret)))` active in the chi middleware chain; former `MockAuthMiddleware` call commented out
+- ✅ `go.work` updated to include the `tokengen` module
+
+**tokengen Tool (tokengen/):**
+- ✅ `tokengen/cmd/main.go` — standalone JWT generation utility; accepts an optional `user_id` CLI argument (default: 1); signs tokens with the same HMAC-SHA256 secret as the gateway; usage: `export TOKEN=$(go run ./tokengen/cmd/main.go 1)`
+- ✅ `tokengen/go.mod` — new Go module `github.com/fjod/go_cart/tokengen` with `github.com/golang-jwt/jwt/v5` dependency
+
+**integration_test_flow.md (updated to v1.7):**
+- ✅ Prerequisite step added: generate JWT token via `tokengen` before running tests
+- ✅ All 24 curl commands updated with `-H "Authorization: Bearer $TOKEN"`
+
 **Remaining Phase 4 Tasks:**
-- ⏳ Real JWT authentication (replace MockAuthMiddleware in API Gateway)
 - ⏳ Circuit breakers for backend gRPC calls
 
 ---
@@ -1067,46 +1098,26 @@ orders-service/
 
 ## Recent Updates
 
-### March 10, 2026 - Rate Limiting Middleware (Phase 4)
+### March 10, 2026 - JWT Authentication (Phase 4)
 
-**Summary:** Per-client token bucket rate limiting added to the API Gateway. A new `RateLimiter` middleware in `api-gateway/internal/middleware/rate.go` uses `golang.org/x/time/rate` to enforce 10 requests/second per client with a burst allowance of 20. The rate-limiting key resolves to the authenticated user ID from request context and falls back to `RemoteAddr` for unauthenticated requests. Stale client entries are evicted by a background cleanup goroutine every 10 minutes. The middleware is registered in the chi middleware chain immediately after `MockAuthMiddleware` so the user ID is available for keying. `golang.org/x/time v0.14.0` was added as a new dependency.
-
-**Changes:**
-
-- `api-gateway/internal/middleware/rate.go` — New file: `RateLimiter` struct with `sync.Map`, `NewRateLimiter(rps, burst)` constructor, `getLimiter(key)` per-client limiter lookup, `cleanup(interval)` background eviction goroutine, and `Middleware` handler that returns HTTP 429 with `Retry-After: 1` on exhaustion
-- `api-gateway/cmd/main.go` — `NewRateLimiter(10, 20)` instantiated; `limiter.Middleware` registered in the chi middleware chain after `MockAuthMiddleware`
-- `api-gateway/go.mod` — `golang.org/x/time v0.14.0` added
-
----
-
-### March 3, 2026 - Structured Logging with slog (Phase 4)
-
-**Summary:** Structured JSON logging implemented across all seven services using Go's standard library `log/slog`. A shared `pkg/logger` package provides a logger factory, a context-aware helper for log-trace correlation, and a gRPC unary server interceptor. Every service now initializes a named logger on startup, sets it as the process-wide `slog` default, and registers the gRPC interceptor so every RPC call emits a timed, structured log line. The API Gateway additionally gains a new `MyRequestLogger` HTTP middleware that captures response status codes and logs each request with method, path, status, duration, and request ID.
+**Summary:** Real JWT authentication implemented in the API Gateway, completing a key Phase 4 goal. `JWTAuthMiddleware` in `api-gateway/internal/middleware/auth.go` validates HMAC-SHA256 signed Bearer tokens, returning HTTP 401 for any missing, malformed, or invalid token. The gateway now reads the signing secret from a `JWT_SECRET` environment variable. A new standalone `tokengen` tool was added as a separate Go module to generate signed test tokens. The middleware file previously containing `MockAuthMiddleware` was split into dedicated files: `auth.go` for JWT validation and `request_id.go` for request ID propagation. `integration_test_flow.md` was updated to v1.7 with a JWT prerequisite step and Bearer token headers on all 24 curl commands. All 14 integration steps passed with JWT auth active, including 4 pre-flight 401 enforcement checks.
 
 **Changes:**
 
-**Shared Logger Package (pkg/logger/):**
-- `pkg/logger/logger.go` - `New(serviceName, level string)` creates a `slog.JSONHandler` writing JSON to stdout; attaches a `service` field to all records
-- `pkg/logger/logger.go` - `WithContext(logger, ctx)` extracts `trace_id` and `span_id` from the active OTel span and `request_id` from context, enabling log-trace correlation
-- `pkg/logger/logger.go` - `UnaryServerInterceptor(log)` gRPC interceptor logs method, duration, and gRPC status code for every unary RPC
-
-**API Gateway (api-gateway/):**
-- `api-gateway/cmd/main.go` - `logger.New("api-gateway", "info")` initialized; `slog.SetDefault` set; all events use structured logging
-- `api-gateway/internal/middleware/logging.go` - New `MyRequestLogger` HTTP middleware logging method, path, status, duration, and request_id for every request
-
-**All Backend Services:**
-- `cart-service/cmd/main.go` - Named logger initialized; passed into service, gRPC server, and poller; `UnaryServerInterceptor` registered
-- `checkout-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; passed into outbox poller and checkout service; `UnaryServerInterceptor` registered
-- `orders-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; passed into Kafka consumer; `UnaryServerInterceptor` registered
-- `inventory-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
-- `payment-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
-- `product-service/cmd/main.go` - Named logger initialized; `slog.SetDefault` set; `UnaryServerInterceptor` registered
+- `api-gateway/internal/middleware/auth.go` — New file (renamed and rewritten from `middleware.go`): `JWTAuthMiddleware(secret []byte)` validates HMAC-SHA256 Bearer tokens and extracts `user_id` from JWT claims into request context
+- `api-gateway/internal/middleware/request_id.go` — New file: RequestID middleware extracted from the former `middleware.go`
+- `api-gateway/cmd/main.go` — `JwtSecret` field added to `Config` struct; `JWT_SECRET` env var wired in; `JWTAuthMiddleware` active, `MockAuthMiddleware` commented out
+- `tokengen/cmd/main.go` — New standalone JWT generator; accepts optional `user_id` CLI arg; signs with the same HMAC-SHA256 secret
+- `tokengen/go.mod` — New Go module `github.com/fjod/go_cart/tokengen` with `github.com/golang-jwt/jwt/v5`
+- `go.work` — Updated to include the `tokengen` module
+- `integration_test_flow.md` — Updated to v1.7: JWT prerequisite step added; all curl commands updated with `Authorization: Bearer $TOKEN` header
 
 ---
+
 
 ## Progress Summary
 
-**Overall Completion:** ~97%
+**Overall Completion:** ~98%
 
 - ✅ Product Service Database Layer: 100%
 - ✅ Product Service Domain Layer: 100%
@@ -1124,7 +1135,7 @@ orders-service/
 - ✅ Cart Service Production Readiness: 80% (env vars, graceful shutdown, Redis + Kafka integration done)
 - ✅ **Cart Service Bug Fixes: UpdateQuantity now returns 404 instead of 500 for non-existent items**
 - ✅ API Gateway HTTP Server: 100% (chi router, graceful shutdown, health check)
-- ✅ API Gateway Middleware: 95% (auth mock, request ID, structured HTTP logging, rate limiting done; JWT auth, circuit breaker pending)
+- ✅ API Gateway Middleware: 100% (JWT auth, request ID, structured HTTP logging, rate limiting all complete; circuit breaker is a separate Phase 4 item)
 - ✅ **API Gateway Cart Endpoints: 100% (All 5 cart endpoints complete with comprehensive unit tests)**
 - ✅ **API Gateway Product Endpoints: 50% (GET /products done with tests; GET /products/:id pending)**
 - ✅ **API Gateway Checkout Endpoints: 100% (POST /checkout complete with idempotency, error handling, status mapping)**
@@ -1137,12 +1148,12 @@ orders-service/
 - ✅ Infrastructure (Docker): 100% (MongoDB, Redis, PostgreSQL, Kafka broker + Kafdrop, OTel Collector, and Jaeger configured)
 - ✅ **Distributed Tracing: 100%** (OpenTelemetry instrumentation across all 7 services; gRPC auto-instrumented via otelgrpc; HTTP instrumented via otelhttp; Kafka trace propagation via W3C headers; Jaeger UI available at port 16686)
 - ✅ **Structured Logging: 100%** (slog JSON logging across all 7 services; shared pkg/logger with factory, trace-correlation helper, and gRPC unary interceptor; HTTP request middleware in API Gateway)
-- ✅ **Integration Testing: 76%** (25 tests documented in v1.4; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 new orders HTTP endpoints all passing; 4 remaining failures: Kafka consumer cold-start race on tests 5.2 and 5.3, cascaded failure on 7.1, and ClearCart 500 on empty cart now fixed)
+- ✅ **Integration Testing: updated to v1.7** (14/14 executed steps PASS with JWT auth active; 4 pre-flight JWT enforcement checks confirmed; full end-to-end checkout saga verified; all curl commands updated with Bearer token header)
 
 **Phase 1 Progress:**
 - Product Service ~75% complete (core features done, hardening needed)
 - **Cart Service 100% complete (All 5 gRPC endpoints with Redis caching, Kafka consumer for cart clearing, service layer, unit + integration tests, bug fixes applied)**
-- **API Gateway ~92% complete (All 5 cart + 1 product + 1 checkout + 2 orders endpoints complete; rate limiting done; JWT auth, circuit breaker pending)**
+- **API Gateway ~97% complete (All 5 cart + 1 product + 1 checkout + 2 orders endpoints complete; JWT auth + rate limiting done; circuit breaker pending)**
 - **Docker Infrastructure ✅ 100% complete (MongoDB, Redis, PostgreSQL, Kafka broker, and Kafdrop UI configured)**
 
 **Phase 2 Progress:**
@@ -1154,11 +1165,11 @@ orders-service/
 
 **Phase 3 Progress:**
 - **Orders Service ✅ 100% complete (Kafka consumer consumes checkout-outbox events, creates orders in PostgreSQL, gRPC query API on port 50055, idempotent processing, 7 integration tests with testcontainers, Kafka FirstOffset cold-start fix applied)**
-- **Integration Testing updated (v1.4; 25 tests; 19 PASS / 4 FAIL / 2 SKIP; Phase 10 orders HTTP error scenarios added and passing)**
+- **Integration Testing updated to v1.7 (JWT auth prerequisite added; all 24 curl commands updated with Bearer token header; 14/14 executed steps PASS)**
 
 **Phase 4 Progress:**
 - **Distributed Tracing ✅ 100% complete (OpenTelemetry across all 7 services; shared pkg/tracing module; gRPC auto-instrumented; HTTP instrumented at API Gateway; Kafka W3C context propagation between Checkout and Cart; Jaeger + OTel Collector in Docker Compose)**
 - **Structured Logging ✅ 100% complete (slog JSON logging across all 7 services; shared pkg/logger module with service factory, context/trace correlation helper, and gRPC unary interceptor; HTTP request logging middleware in API Gateway)**
 - **Rate Limiting ✅ 100% complete (per-client token bucket middleware in API Gateway; 10 req/sec, burst 20; user-ID-keyed with IP fallback; background stale-entry cleanup; golang.org/x/time dependency added)**
-- Real JWT authentication: not started
+- **JWT Authentication ✅ 100% complete (JWTAuthMiddleware with HMAC-SHA256 validation; replaces MockAuthMiddleware; JWT_SECRET env var; tokengen utility for test token generation; integration_test_flow.md updated to v1.7)**
 - Circuit breakers: not started

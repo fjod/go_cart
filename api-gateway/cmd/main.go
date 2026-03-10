@@ -37,6 +37,7 @@ type Config struct {
 	RequestTimeout      time.Duration
 	ShutdownTimeout     time.Duration
 	MaxRequestBodySize  int64
+	JwtSecret           string
 }
 
 func loadConfig() *Config {
@@ -46,6 +47,7 @@ func loadConfig() *Config {
 		ProductServiceAddr:  getEnv("PRODUCT_SERVICE_ADDR", "localhost:50051"),
 		CheckoutServiceAddr: getEnv("CHECKOUT_SERVICE_ADDR", "localhost:50056"),
 		OrdersServiceAddr:   getEnv("ORDERS_SERVICE_ADDR", "localhost:50055"),
+		JwtSecret:           getEnv("JWT_SECRET", "Yn8x85spEjIXQnGlmaWAqbX9I6RS3ts2TBXUXQoyi2g="), // same in tokengen
 		RequestTimeout:      30 * time.Second,
 		ShutdownTimeout:     10 * time.Second,
 		MaxRequestBodySize:  1 << 20, // 1MB
@@ -126,12 +128,13 @@ func main() {
 	limiter := l.NewRateLimiter(10, 20) // 10 req/sec, burst of 20
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)   // 1. generate request ID
-	r.Use(h.RequestIDMiddleware)  // 2. your custom request ID propagation
+	r.Use(l.RequestIDMiddleware)  // 2. your custom request ID propagation
 	r.Use(middleware.Recoverer)   // 3. catch panics
 	r.Use(l.MyRequestLogger(log)) // 4. log with request ID + correct status
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(middleware.Compress(5))
-	r.Use(h.MockAuthMiddleware)
+	//r.Use(l.MockAuthMiddleware)
+	r.Use(l.JWTAuthMiddleware([]byte(cfg.JwtSecret)))
 	r.Use(limiter.Middleware)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

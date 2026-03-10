@@ -133,7 +133,7 @@ GET    /api/v1/orders/{order_id}      Get order by ID
 ### Testing
 - Unit tests with mocks
 - Integration tests with testcontainers (MongoDB, Redis, Kafka, PostgreSQL)
-- End-to-end tests: 19/25 passing (v1.4)
+- End-to-end tests: 14/14 executed steps passing with JWT auth active (v1.7)
 
 ## Environment Variables
 
@@ -153,6 +153,7 @@ GET    /api/v1/orders/{order_id}      Get order by ID
 | PAYMENT_SERVICE_ADDR | Checkout | localhost:50054 |
 | CHECKOUT_SERVICE_ADDR | Gateway | localhost:50056 |
 | ORDERS_SERVICE_ADDR | Gateway | localhost:50055 |
+| JWT_SECRET | Gateway | Yn8x85spEjIXQnGlmaWAqbX9I6RS3ts2TBXUXQoyi2g= |
 
 ## Service Structure Pattern
 
@@ -190,7 +191,7 @@ service/
 - Orders Service: Kafka consumer + PostgreSQL persistence + gRPC query API (GetOrder, ListOrders)
 - Idempotent event processing via `checkout_id` UNIQUE constraint
 
-### Phase 4: Integration & Polish 🔄 In Progress
+### Phase 4: Integration & Polish 🔄 In Progress (1 item remaining)
 
 #### Distributed Tracing (OpenTelemetry) ✅ Complete
 - `pkg/tracing/propagation.go` — shared `KafkaHeaderCarrier` (W3C TextMapCarrier) for trace context over Kafka headers
@@ -206,33 +207,37 @@ service/
 
 #### Rate Limiting (API Gateway) ✅ Complete
 - `api-gateway/internal/middleware/rate.go` — `RateLimiter` using `golang.org/x/time/rate`; per-client token buckets keyed by authenticated user ID (falls back to `RemoteAddr`); 10 req/sec with burst of 20; background goroutine evicts stale entries every 10 minutes
-- `api-gateway/cmd/main.go` — `NewRateLimiter(10, 20)` registered as chi middleware after `MockAuthMiddleware`; returns HTTP 429 with `Retry-After: 1` header on exhaustion
+- `api-gateway/cmd/main.go` — `NewRateLimiter(10, 20)` registered as chi middleware after `JWTAuthMiddleware`; returns HTTP 429 with `Retry-After: 1` header on exhaustion
+
+#### JWT Authentication (API Gateway) ✅ Complete
+- `api-gateway/internal/middleware/auth.go` — `JWTAuthMiddleware(secret []byte)` validates HMAC-SHA256 signed tokens; returns 401 if `Authorization` header is missing or not in `Bearer <token>` format, or if the signature is invalid; extracts `user_id` from JWT claims into request context
+- `api-gateway/cmd/main.go` — `JwtSecret` field added to `Config` struct; `JWT_SECRET` env var with default `Yn8x85spEjIXQnGlmaWAqbX9I6RS3ts2TBXUXQoyi2g=`; `JWTAuthMiddleware` active in the chi middleware chain (replacing the former `MockAuthMiddleware`)
+- `tokengen/cmd/main.go` — New standalone tool that generates signed JWTs for testing; accepts an optional `user_id` argument (default: 1); uses the same secret as the gateway (`export TOKEN=$(go run ./tokengen/cmd/main.go 1)`)
+- `tokengen/go.mod` — New Go module (`github.com/fjod/go_cart/tokengen`) with `github.com/golang-jwt/jwt/v5` dependency
+- `go.work` — Updated to include the `tokengen` module
 
 #### Remaining Phase 4 Items
-- ❌ Real JWT authentication (replace MockAuthMiddleware)
 - ❌ Circuit breakers
 
 ## Known Issues
 
 1. **Async cache invalidation race**: Cache may serve stale data immediately after mutations (workaround: 50ms sleep in tests)
-2. **JWT authentication**: MockAuthMiddleware in Gateway always injects user_id=1
-3. **Integration test flakiness**: Tests 5.2/5.3 can fail if Kafka consumer group join latency exceeds test wait window (fixed in code with `FirstOffset`; restart services if observed)
+2. **Integration test flakiness**: Tests 5.2/5.3 can fail if Kafka consumer group join latency exceeds test wait window (fixed in code with `FirstOffset`; restart services if observed)
 
 ## Next Priorities
 
-1. Replace MockAuthMiddleware with real JWT validation
-2. Implement circuit breakers for backend service calls
+1. Implement circuit breakers for backend service calls
 
 ## Testing
 
 - **Total tests:** 49+ unit and integration tests across all services
-- **Integration tests:** 19/25 passing (v1.4 flow; 4 failures: Kafka timing + cart schema deviations)
+- **Integration tests:** 14/14 executed steps passing with JWT auth active (v1.7 flow); pre-flight JWT enforcement checks confirmed; full end-to-end checkout saga verified
 - **Test coverage:** Repository, Service, gRPC handler, Kafka consumer layers
 
-See `integration_test_flow.md` for full test suite documentation.
+See `integration_test_flow.md` for full test suite documentation (v1.7).
 
 ## References
 
 - `HIGH_LEVEL_IMPLEMENTATION_PLAN.md` - Complete architecture blueprint
 - `project_status.md` - Detailed implementation tracking
-- `integration_test_flow.md` - End-to-end test cases (v1.4, 25 assertions)
+- `integration_test_flow.md` - End-to-end test cases (v1.7, JWT auth required for all protected routes)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fjod/go_cart/api-gateway/internal/middleware"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc"
@@ -82,7 +83,7 @@ func TestGetCart_Success(t *testing.T) {
 	request := httptest.NewRequest("GET", "/", nil)
 
 	// Add user_id to context
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	request = request.WithContext(ctx)
 
 	handler.GetCart(recorder, request)
@@ -145,7 +146,7 @@ func TestAddItem_Success(t *testing.T) {
 	request := httptest.NewRequest("POST", "/items", bytes.NewReader(reqBytes))
 
 	// Add user_id to context
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	ctx = context.WithValue(ctx, "request_id", "test-request-123")
 	request = request.WithContext(ctx)
 
@@ -196,7 +197,7 @@ func TestAddItem_InvalidJSON(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("POST", "/items", bytes.NewReader([]byte("invalid json")))
 
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	request = request.WithContext(ctx)
 
 	handler.AddItem(recorder, request)
@@ -231,7 +232,7 @@ func TestAddItem_InvalidProductID(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("POST", "/items", bytes.NewReader(reqBytes))
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			handler.AddItem(recorder, request)
@@ -269,7 +270,7 @@ func TestAddItem_InvalidQuantity(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("POST", "/items", bytes.NewReader(reqBytes))
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			handler.AddItem(recorder, request)
@@ -316,7 +317,7 @@ func TestAddItem_GRPCErrors(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("POST", "/items", bytes.NewReader(reqBytes))
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			handler.AddItem(recorder, request)
@@ -352,7 +353,7 @@ func TestUpdateQuantity_Success(t *testing.T) {
 	request := httptest.NewRequest("PUT", "/items/1", bytes.NewReader(reqBytes))
 
 	// Add user_id to context and URL param
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	ctx = context.WithValue(ctx, "request_id", "test-request-123")
 	request = request.WithContext(ctx)
 
@@ -397,7 +398,7 @@ func TestUpdateQuantity_InvalidProductID(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("PUT", "/items/"+tt.productID, bytes.NewReader(reqBytes))
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			rctx := chi.NewRouteContext()
@@ -433,7 +434,7 @@ func TestUpdateQuantity_InvalidQuantity(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("PUT", "/items/1", bytes.NewReader(reqBytes))
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			rctx := chi.NewRouteContext()
@@ -468,7 +469,7 @@ func TestRemoveItem_Success(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("DELETE", "/items/1", nil)
 
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	ctx = context.WithValue(ctx, "request_id", "test-request-123")
 	request = request.WithContext(ctx)
 
@@ -510,7 +511,7 @@ func TestRemoveItem_InvalidProductID(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest("DELETE", "/items/"+tt.productID, nil)
 
-			ctx := context.WithValue(request.Context(), "user_id", int64(1))
+			ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 			request = request.WithContext(ctx)
 
 			rctx := chi.NewRouteContext()
@@ -564,7 +565,7 @@ func TestClearCart_Success(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("DELETE", "/", nil)
 
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	ctx = context.WithValue(ctx, "request_id", "test-request-123")
 	request = request.WithContext(ctx)
 
@@ -619,7 +620,7 @@ func TestClearCart_GRPCError(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("DELETE", "/", nil)
 
-	ctx := context.WithValue(request.Context(), "user_id", int64(1))
+	ctx := context.WithValue(request.Context(), middleware.UserIDKey, int64(1))
 	request = request.WithContext(ctx)
 
 	handler.ClearCart(recorder, request)

@@ -72,7 +72,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func getUserIDFromContext(context context.Context) string {
-	contextValue := context.Value("user_id")
+	contextValue := context.Value(UserIDKey)
 	if userID, ok := contextValue.(string); ok {
 		return userID
 	}

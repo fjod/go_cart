@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	m "github.com/fjod/go_cart/api-gateway/internal/middleware"
 	pb "github.com/fjod/go_cart/cart-service/pkg/proto"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc/metadata"
@@ -111,7 +112,7 @@ func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 }
 
 func getUserIDFromContext(ctx context.Context) int64 {
-	if userID, ok := ctx.Value("user_id").(int64); ok {
+	if userID, ok := ctx.Value(m.UserIDKey).(int64); ok {
 		return userID
 	}
 	return 0
