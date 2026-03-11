@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A distributed e-commerce platform in Go with microservices architecture for learning purposes.
 
-**Current Phase:** Phase 4 (Integration & Polish) - In Progress 🔄
-**Completed:** Phase 1 (Foundation) ✅ | Phase 2 (Checkout Orchestration) ✅ | Phase 3 (Order Processing) ✅
+**Current Phase:** Phase 4 (Integration & Polish) ✅ Complete
+**Completed:** Phase 1 (Foundation) ✅ | Phase 2 (Checkout Orchestration) ✅ | Phase 3 (Order Processing) ✅ | Phase 4 (Integration & Polish) ✅
 
 ## Services Running
 
@@ -191,7 +191,7 @@ service/
 - Orders Service: Kafka consumer + PostgreSQL persistence + gRPC query API (GetOrder, ListOrders)
 - Idempotent event processing via `checkout_id` UNIQUE constraint
 
-### Phase 4: Integration & Polish 🔄 In Progress (1 item remaining)
+### Phase 4: Integration & Polish ✅ Complete
 
 #### Distributed Tracing (OpenTelemetry) ✅ Complete
 - `pkg/tracing/propagation.go` — shared `KafkaHeaderCarrier` (W3C TextMapCarrier) for trace context over Kafka headers
@@ -216,8 +216,12 @@ service/
 - `tokengen/go.mod` — New Go module (`github.com/fjod/go_cart/tokengen`) with `github.com/golang-jwt/jwt/v5` dependency
 - `go.work` — Updated to include the `tokengen` module
 
-#### Remaining Phase 4 Items
-- ❌ Circuit breakers
+#### Circuit Breakers (API Gateway, Cart Service, Checkout Service) ✅ Complete
+- `pkg/circuitbreaker/circuitbreaker.go` — shared `Breaker` type wrapping `gobreaker.CircuitBreaker[any]` from `github.com/sony/gobreaker/v2`; `DefaultSettings` opens after 5 consecutive failures, stays open for 10 seconds, allows 3 probes in half-open; `IsSuccessful` treats gRPC business errors (`NotFound`, `InvalidArgument`, `AlreadyExists`, `PermissionDenied`, `Unauthenticated`, `FailedPrecondition`, `Canceled`) as successes so only infrastructure failures trip the breaker; state transitions logged via `slog.Warn`
+- `pkg/circuitbreaker/go.mod` — standalone module `circuitbreaker` with `github.com/sony/gobreaker/v2 v2.4.0`; `go.work` updated to include this module
+- `api-gateway/cmd/main.go` — independent `Breaker` per downstream service (`cartCb`, `productCb`, `checkoutCb`, `ordersCb`); each registered via `grpc.WithUnaryInterceptor(cb.UnaryClientInterceptor())` on the corresponding `grpc.NewClient` call
+- `cart-service/cmd/main.go` — `productCb` breaker wired into the Product Service gRPC connection
+- `checkout-service/cmd/main.go` — four breakers (`cartCb`, `productCb`, `invCb`, `payCb`) wired into all downstream connections, protecting each saga step independently
 
 ## Known Issues
 
@@ -226,7 +230,10 @@ service/
 
 ## Next Priorities
 
-1. Implement circuit breakers for backend service calls
+All Phase 4 items are complete. The platform is feature-complete as defined in the High-Level Implementation Plan. Potential future enhancements:
+- Production hardening: additional gRPC endpoints on Product Service (CreateProduct, UpdateProduct, DeleteProduct)
+- Containerize services in Docker Compose for fully-automated startup
+- Pagination support for product and order list endpoints
 
 ## Testing
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"circuitbreaker"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,55 +74,59 @@ func main() {
 	defer shutdown(context.Background())
 	cfg := loadConfig()
 
+	cartCb := circuitbreaker.New(circuitbreaker.DefaultSettings("cart-service", log))
 	cartServiceConn, err := grpc.NewClient(
 		cfg.CartServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(cartCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to cart service", "addr", cfg.CartServiceAddr, "error", err)
 		os.Exit(1)
 	}
 	defer cartServiceConn.Close()
-
 	cartClient := cartpb.NewCartServiceClient(cartServiceConn)
 	cartHandler := h.NewCartHandler(cartClient, cfg.RequestTimeout)
 
+	productCb := circuitbreaker.New(circuitbreaker.DefaultSettings("product-service", log))
 	productServiceConn, err := grpc.NewClient(
 		cfg.ProductServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(productCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to product service", "addr", cfg.ProductServiceAddr, "error", err)
 		os.Exit(1)
 	}
 	defer productServiceConn.Close()
-
 	productClient := productpb.NewProductServiceClient(productServiceConn)
 	productHandler := h.NewProductHandler(productClient, cfg.RequestTimeout)
 
+	checkoutCb := circuitbreaker.New(circuitbreaker.DefaultSettings("checkout-service", log))
 	checkoutServiceConn, err := grpc.NewClient(
 		cfg.CheckoutServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(checkoutCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to checkout service", "addr", cfg.CheckoutServiceAddr, "error", err)
 		os.Exit(1)
 	}
 	defer checkoutServiceConn.Close()
-
 	checkoutClient := checkoutpb.NewCheckoutServiceClient(checkoutServiceConn)
 	checkoutHandler := h.NewCheckoutHandler(checkoutClient, cfg.RequestTimeout)
 
+	ordersCb := circuitbreaker.New(circuitbreaker.DefaultSettings("orders-service", log))
 	ordersServiceConn, err := grpc.NewClient(
 		cfg.OrdersServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(ordersCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to orders service", "addr", cfg.OrdersServiceAddr, "error", err)
 		os.Exit(1)
 	}
 	defer ordersServiceConn.Close()
-
 	ordersClient := orderspb.NewOrdersServiceClient(ordersServiceConn)
 	ordersHandler := h.NewOrdersHandler(ordersClient, cfg.RequestTimeout)
 

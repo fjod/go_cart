@@ -9,6 +9,7 @@ use (
 	./payment-service
 	./pkg/tracing
 	./pkg/logger
+	./pkg/circuitbreaker
 	./product-service
 	./tokengen
 )

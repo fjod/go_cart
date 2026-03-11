@@ -1,6 +1,7 @@
 package main
 
 import (
+	"circuitbreaker"
 	"context"
 	"fmt"
 	"net"
@@ -48,16 +49,17 @@ func main() {
 	log.Info("connected to MongoDB", "uri", mongoURI)
 
 	// Set up gRPC connection to Product Service
+	productCb := circuitbreaker.New(circuitbreaker.DefaultSettings("product-service", log))
 	productConn, err := grpc.NewClient(
 		productServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(productCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to product service", "addr", productServiceAddr, "error", err)
 		os.Exit(1)
 	}
 	defer productConn.Close()
-
 	productClient := productpb.NewProductServiceClient(productConn)
 	log.Info("connected to product service", "addr", productServiceAddr)
 
@@ -92,9 +94,7 @@ func main() {
 	defer shutdown(context.Background())
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.ChainUnaryInterceptor(
-			logger.UnaryServerInterceptor(log),
-		),
+		grpc.ChainUnaryInterceptor(logger.UnaryServerInterceptor(log)),
 	)
 	pb.RegisterCartServiceServer(grpcServer, cartServer)
 

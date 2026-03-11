@@ -1,6 +1,7 @@
 package main
 
 import (
+	"circuitbreaker"
 	"context"
 	"fmt"
 	"log/slog"
@@ -104,9 +105,11 @@ func main() {
 		poller.Run(pollerCtx)
 	}()
 
+	cartCb := circuitbreaker.New(circuitbreaker.DefaultSettings("cart-service", log))
 	cartConn, err := grpc.NewClient(cartServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(cartCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to cart service", "addr", cartServiceAddr, "error", err)
 		os.Exit(1)
@@ -115,9 +118,11 @@ func main() {
 	cartClient := cartpb.NewCartServiceClient(cartConn)
 	log.Info("connected to cart service", "addr", cartServiceAddr)
 
+	productCb := circuitbreaker.New(circuitbreaker.DefaultSettings("product-service", log))
 	productConn, err := grpc.NewClient(productServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(productCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to product service", "addr", productServiceAddr, "error", err)
 		os.Exit(1)
@@ -126,9 +131,11 @@ func main() {
 	productClient := productpb.NewProductServiceClient(productConn)
 	log.Info("connected to product service", "addr", productServiceAddr)
 
+	invCb := circuitbreaker.New(circuitbreaker.DefaultSettings("inventory-service", log))
 	inventoryConn, err := grpc.NewClient(inventoryServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(invCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to inventory service", "addr", inventoryServiceAddr, "error", err)
 		os.Exit(1)
@@ -137,9 +144,11 @@ func main() {
 	inventoryClient := inventorypb.NewInventoryServiceClient(inventoryConn)
 	log.Info("connected to inventory service", "addr", inventoryServiceAddr)
 
+	payCb := circuitbreaker.New(circuitbreaker.DefaultSettings("payment-service", log))
 	paymentConn, err := grpc.NewClient(paymentServiceAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(payCb.UnaryClientInterceptor()))
 	if err != nil {
 		log.Error("failed to connect to payment service", "addr", paymentServiceAddr, "error", err)
 		os.Exit(1)
